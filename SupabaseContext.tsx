@@ -109,14 +109,17 @@ export const SupabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setError(null);
       try {
         // Quick connectivity check before attempting heavy operations
+        // Removed the throw Error here to allow offline mode to proceed
         const client = getSupabaseSafe();
         const { error: pingError } = await client.from('app_settings').select('key').limit(1).maybeSingle();
         
         if (pingError && pingError.message && pingError.message.includes('Failed to fetch')) {
-             throw new Error('عدم دسترسی به سرور. لطفاً اتصال اینترنت خود را بررسی کنید.');
+             console.warn('عدم دسترسی به سرور. برنامه در حالت آفلاین اجرا می‌شود.');
+        } else if (navigator.onLine) {
+            // Only attempt seeding if we are online and reachable
+            await seedDefaultData();
         }
 
-        await seedDefaultData();
         await Promise.all([
           fetchCategories(),
           fetchLocations(),
@@ -128,7 +131,7 @@ export const SupabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         ]);
       } catch (err: any) {
         const msg = err.message || `خطا در مقداردهی اولیه داده‌ها.`;
-        setError(msg);
+        // Only set error if it's critical, otherwise log and let app run (potentially with empty data)
         console.error('Initialization error:', err);
       } finally {
         setIsLoading(false);

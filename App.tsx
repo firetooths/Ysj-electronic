@@ -1,8 +1,12 @@
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext';
 import { SupabaseProvider } from './SupabaseContext';
+import { Capacitor } from '@capacitor/core';
+
+// Services
+import { syncFullDatabase, processOfflineQueue } from './services/offlineService';
 
 // Layouts
 import { Layout } from './components/layout/Layout';
@@ -120,6 +124,40 @@ const GeneralLayout: React.FC<{ title: string }> = ({ title }) => (
 );
 
 export const App: React.FC = () => {
+  
+  // Sync Logic
+  useEffect(() => {
+      const runSync = async () => {
+          if (navigator.onLine) {
+              await processOfflineQueue(); // Push pending changes first
+              await syncFullDatabase(); // Then pull fresh data
+          }
+      };
+
+      // Initial sync on app load (both browser and native)
+      runSync();
+
+      // Periodic sync check (every 60 seconds)
+      const intervalId = setInterval(() => {
+          if (navigator.onLine) {
+              runSync();
+          }
+      }, 60000); 
+
+      // Listen for online event to trigger immediate sync
+      const handleOnline = () => {
+          console.log("Network connected. Triggering sync...");
+          runSync();
+      };
+      
+      window.addEventListener('online', handleOnline);
+
+      return () => {
+          clearInterval(intervalId);
+          window.removeEventListener('online', handleOnline);
+      };
+  }, []);
+
   return (
     <AuthProvider>
       <SupabaseProvider>

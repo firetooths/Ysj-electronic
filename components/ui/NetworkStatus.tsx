@@ -7,23 +7,21 @@ export const NetworkStatus: React.FC = () => {
   const [pendingCount, setPendingCount] = useState(0);
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-    
-    // Check queue size periodically to update UI
-    const checkQueue = () => {
+    const updateStatus = () => {
+        setIsOnline(navigator.onLine);
         setPendingCount(getQueueSize());
     };
 
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
+    // 1. Event Listeners
+    window.addEventListener('online', updateStatus);
+    window.addEventListener('offline', updateStatus);
     
-    const interval = setInterval(checkQueue, 2000);
-    checkQueue();
+    // 2. Polling interval (Backup for Android WebViews where events might lag)
+    const interval = setInterval(updateStatus, 2000);
 
     return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', updateStatus);
+      window.removeEventListener('offline', updateStatus);
       clearInterval(interval);
     };
   }, []);
@@ -32,14 +30,14 @@ export const NetworkStatus: React.FC = () => {
 
   return (
     <div className={`${isOnline ? 'bg-orange-500' : 'bg-red-600'} text-white text-center py-2 px-4 text-xs sm:text-sm font-medium fixed top-0 left-0 right-0 z-50 shadow-lg flex justify-center items-center h-12 transition-colors duration-300`}>
-      <div className="flex items-center">
+      <div className="flex items-center" dir="rtl">
           {!isOnline && <i className="fas fa-wifi-slash ml-2 text-lg animate-pulse"></i>}
           {isOnline && <i className="fas fa-sync ml-2 text-lg animate-spin"></i>}
           
           <span>
               {!isOnline 
-                ? `حالت آفلاین فعال است. (${pendingCount} تغییر در صف)` 
-                : `اتصال برقرار شد. در حال همگام‌سازی ${pendingCount} تغییر...`
+                ? `عدم دسترسی به اینترنت (حالت آفلاین - ${pendingCount} تغییر در صف)` 
+                : `اتصال برقرار شد. در حال ارسال ${pendingCount} تغییر به سرور...`
               }
           </span>
       </div>

@@ -1,5 +1,5 @@
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext';
 import { SupabaseProvider } from './SupabaseContext';
@@ -124,13 +124,19 @@ const GeneralLayout: React.FC<{ title: string }> = ({ title }) => (
 );
 
 export const App: React.FC = () => {
-  
+  const [showSyncSuccess, setShowSyncSuccess] = useState(false);
+
   // Sync Logic
   useEffect(() => {
       const runSync = async () => {
           if (navigator.onLine) {
               await processOfflineQueue(); // Push pending changes first
-              await syncFullDatabase(); // Then pull fresh data
+              const success = await syncFullDatabase(); // Then pull fresh data
+              
+              if (success) {
+                  setShowSyncSuccess(true);
+                  setTimeout(() => setShowSyncSuccess(false), 3000);
+              }
           }
       };
 
@@ -162,6 +168,12 @@ export const App: React.FC = () => {
     <AuthProvider>
       <SupabaseProvider>
         <NetworkStatus />
+        {showSyncSuccess && (
+            <div className="fixed top-14 left-1/2 transform -translate-x-1/2 bg-green-600 text-white px-4 py-2 rounded-full shadow-lg z-50 text-sm animate-fade-in-down flex items-center">
+                <i className="fas fa-check-circle ml-2"></i>
+                همگام‌سازی کامل شد. آماده استفاده آفلاین.
+            </div>
+        )}
         <Router>
           <Routes>
             <Route path="/login" element={<LoginPage />} />

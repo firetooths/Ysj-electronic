@@ -1,10 +1,16 @@
+
 import { getSupabaseSafe } from './client';
 import { Category } from '../types';
 import { TABLES } from '../constants';
-import { deleteAsset } from './assetService'; // This function is not used, but kept for context. Let's assume reassign works.
+import { CACHE_KEYS, queryLocalData } from './offlineService';
 
 // --- API Functions for Categories ---
 export const getCategories = async (): Promise<Category[]> => {
+  if (!navigator.onLine) {
+      const { data } = queryLocalData<Category>(CACHE_KEYS.CATEGORIES, () => true, 1, 9999, (a, b) => a.name.localeCompare(b.name));
+      return data;
+  }
+
   const client = getSupabaseSafe();
   const { data, error } = await client
     .from(TABLES.CATEGORIES)

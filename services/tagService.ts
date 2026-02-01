@@ -1,9 +1,16 @@
+
 import { getSupabaseSafe } from './client';
 import { Tag } from '../types';
 import { TABLES } from '../constants';
+import { CACHE_KEYS, queryLocalData } from './offlineService';
 
 // --- API Functions for Phone Line Tags ---
 export const getTags = async (): Promise<Tag[]> => {
+    if (!navigator.onLine) {
+        const { data } = queryLocalData<Tag>(CACHE_KEYS.TAGS, () => true, 1, 9999, (a, b) => a.name.localeCompare(b.name));
+        return data;
+    }
+
     const client = getSupabaseSafe();
     const { data, error } = await client.from(TABLES.TAGS).select('*').order('name');
     if (error) throw error;

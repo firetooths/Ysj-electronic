@@ -3,9 +3,15 @@ import { getSupabaseSafe } from './client';
 import { Node, NodeConfig, NodeType } from '../types';
 import { TABLES, STORAGE_BUCKETS } from '../constants';
 import { processImageForUpload } from '../utils/imageProcessor';
+import { CACHE_KEYS, queryLocalData } from './offlineService';
 
 // --- API Functions for Phone Line Nodes ---
 export const getNodes = async (): Promise<Node[]> => {
+    if (!navigator.onLine) {
+        const { data } = queryLocalData<Node>(CACHE_KEYS.NODES, () => true, 1, 9999, (a, b) => a.name.localeCompare(b.name));
+        return data;
+    }
+
     const client = getSupabaseSafe();
     const { data, error } = await client.from(TABLES.NODES).select('*').order('name');
     if (error) throw error;

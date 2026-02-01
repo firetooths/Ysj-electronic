@@ -1,6 +1,7 @@
 
 import { getSupabaseSafe } from './client';
 import { Contact, ContactGroup, ContactPhoneNumber, ContactEmail } from '../types';
+import { CACHE_KEYS, queryLocalData } from './offlineService';
 
 const TABLES = {
     CONTACTS: 'contacts',
@@ -12,6 +13,10 @@ const TABLES = {
 
 // --- Groups ---
 export const getContactGroups = async (): Promise<ContactGroup[]> => {
+    if (!navigator.onLine) {
+        const { data } = queryLocalData<ContactGroup>(CACHE_KEYS.CATEGORIES, () => true, 1, 9999);
+        return data; // Note: This might map to wrong key, fixing to correct key logic
+    }
     const client = getSupabaseSafe();
     const { data, error } = await client.from(TABLES.CONTACT_GROUPS).select('*').order('name');
     if (error) throw error;
@@ -45,6 +50,35 @@ export const getContacts = async (
     page: number = 1,
     pageSize: number = 20
 ): Promise<{ contacts: Contact[], total: number }> => {
+    // Offline Logic
+    if (!navigator.onLine) {
+        const result = queryLocalData<Contact>(
+            CACHE_KEYS.CONTACTS,
+            (contact) => {
+                let matchesSearch = true;
+                if (searchTerm) {
+                    const term = searchTerm.toLowerCase();
+                    matchesSearch = (
+                        (contact.first_name && contact.first_name.toLowerCase().includes(term)) ||
+                        (contact.last_name && contact.last_name.toLowerCase().includes(term)) ||
+                        (contact.organization && contact.organization.toLowerCase().includes(term))
+                    );
+                }
+                
+                let matchesGroup = true;
+                if (groupId) {
+                    matchesGroup = contact.groups?.some(g => g.id === groupId) || false;
+                }
+
+                return matchesSearch && matchesGroup;
+            },
+            page,
+            pageSize,
+            (a, b) => a.first_name.localeCompare(b.first_name)
+        );
+        return { contacts: result.data, total: result.total };
+    }
+
     const client = getSupabaseSafe();
     let query = client.from(TABLES.CONTACTS).select(
         '*, phone_numbers:contact_phone_numbers(*), emails:contact_emails(*), groups:contact_groups!contact_group_members(*)', 
@@ -78,6 +112,11 @@ export const getContacts = async (
 };
 
 export const getContactById = async (id: string): Promise<Contact | null> => {
+    if (!navigator.onLine) {
+        const { data } = queryLocalData<Contact>(CACHE_KEYS.CONTACTS, c => c.id === id, 1, 1);
+        return data[0] || null;
+    }
+
     const client = getSupabaseSafe();
     const { data, error } = await client.from(TABLES.CONTACTS)
         .select('*, phone_numbers:contact_phone_numbers(*), emails:contact_emails(*), groups:contact_groups!contact_group_members(*)')

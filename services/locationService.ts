@@ -1,9 +1,16 @@
+
 import { getSupabaseSafe } from './client';
 import { Location } from '../types';
 import { TABLES } from '../constants';
+import { CACHE_KEYS, queryLocalData } from './offlineService';
 
 // --- API Functions for Locations ---
 export const getLocations = async (): Promise<Location[]> => {
+  if (!navigator.onLine) {
+      const { data } = queryLocalData<Location>(CACHE_KEYS.LOCATIONS, () => true, 1, 9999, (a, b) => a.name.localeCompare(b.name));
+      return data;
+  }
+
   const client = getSupabaseSafe();
   const { data, error } = await client
     .from(TABLES.LOCATIONS)

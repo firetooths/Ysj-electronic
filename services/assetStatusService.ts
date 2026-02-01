@@ -2,8 +2,15 @@
 import { getSupabaseSafe } from './client';
 import { AssetStatusItem } from '../types';
 import { TABLES } from '../constants';
+import { CACHE_KEYS, queryLocalData } from './offlineService';
 
 export const getAssetStatuses = async (): Promise<AssetStatusItem[]> => {
+  if (!navigator.onLine) {
+      // Sort by created_at which is default sort in queryLocalData, but we can enforce it.
+      const { data } = queryLocalData<AssetStatusItem>(CACHE_KEYS.ASSET_STATUSES, () => true, 1, 9999, (a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      return data;
+  }
+
   const client = getSupabaseSafe();
   const { data, error } = await client
     .from(TABLES.ASSET_STATUSES)

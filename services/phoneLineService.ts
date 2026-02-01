@@ -3,6 +3,7 @@ import { getSupabaseSafe } from './client';
 import { PhoneLine, RouteNode, Node, Tag, BulkPhoneLine } from '../types';
 import { TABLES } from '../constants';
 import { logPhoneLineAction } from './phoneLogService';
+import { CACHE_KEYS, queryLocalData } from './offlineService';
 
 export const getPhoneLines = async (
     page: number, 
@@ -10,6 +11,36 @@ export const getPhoneLines = async (
     searchTerm: string = '',
     tagIds: string[] = [],
 ): Promise<{ lines: PhoneLine[], total: number }> => {
+    // Offline Logic
+    if (!navigator.onLine) {
+        const result = queryLocalData<PhoneLine>(
+            CACHE_KEYS.PHONE_LINES,
+            (line) => {
+                let matchesSearch = true;
+                if (searchTerm && searchTerm.length >= 3) {
+                    const term = searchTerm.toLowerCase();
+                    matchesSearch = (
+                        (line.phone_number && line.phone_number.includes(term)) ||
+                        (line.consumer_unit && line.consumer_unit.toLowerCase().includes(term))
+                    );
+                }
+                
+                let matchesTags = true;
+                if (tagIds.length > 0) {
+                    // Check if line has ANY of the selected tags
+                    const lineTags = line.tags?.map(t => t.id) || [];
+                    matchesTags = tagIds.some(id => lineTags.includes(id));
+                }
+
+                return matchesSearch && matchesTags;
+            },
+            page,
+            pageSize,
+            (a, b) => a.phone_number.localeCompare(b.phone_number) // Sort by phone number
+        );
+        return { lines: result.data, total: result.total };
+    }
+
     const client = getSupabaseSafe();
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
@@ -48,6 +79,15 @@ export const getPhoneLines = async (
 };
 
 export const getPhoneLinesByTagId = async (tagId: string): Promise<PhoneLine[]> => {
+    if (!navigator.onLine) {
+        const { data } = queryLocalData<PhoneLine>(
+            CACHE_KEYS.PHONE_LINES,
+            (line) => line.tags?.some(t => t.id === tagId) || false,
+            1, 9999
+        );
+        return data;
+    }
+
     const client = getSupabaseSafe();
     // Use inner join on phone_line_tags to filter by tag_id
     // Fetch route_nodes and their nodes for the report
@@ -71,6 +111,11 @@ export const getPhoneLinesByTagId = async (tagId: string): Promise<PhoneLine[]> 
 };
 
 export const getPhoneLineById = async (id: string): Promise<PhoneLine | null> => {
+  if (!navigator.onLine) {
+      const { data } = queryLocalData<PhoneLine>(CACHE_KEYS.PHONE_LINES, l => l.id === id, 1, 1);
+      return data[0] || null;
+  }
+
   const client = getSupabaseSafe();
   const { data, error } = await client
     .from(TABLES.PHONE_LINES)
@@ -90,6 +135,11 @@ export const getPhoneLineById = async (id: string): Promise<PhoneLine | null> =>
 
 
 export const getPhoneLineByNumber = async (phoneNumber: string): Promise<PhoneLine | null> => {
+    if (!navigator.onLine) {
+        const { data } = queryLocalData<PhoneLine>(CACHE_KEYS.PHONE_LINES, l => l.phone_number === phoneNumber, 1, 1);
+        return data[0] || null;
+    }
+
     const client = getSupabaseSafe();
     const { data, error } = await client
       .from(TABLES.PHONE_LINES)
@@ -121,6 +171,7 @@ export const createPhoneLine = async (
     conflictingRouteNodeIdsToDelete: string[] = [],
     allTags: Tag[]
 ): Promise<PhoneLine> => {
+    if (!navigator.onLine) throw new Error("ثبت خط تلفن در حالت آفلاین امکان‌پذیر نیست.");
     const client = getSupabaseSafe();
 
     if (conflictingRouteNodeIdsToDelete.length > 0) {
@@ -171,6 +222,7 @@ export const updatePhoneLine = async (
     allNodes: Node[],
     allTags: Tag[]
 ): Promise<PhoneLine> => {
+    if (!navigator.onLine) throw new Error("ویرایش خط تلفن در حالت آفلاین امکان‌پذیر نیست.");
     const client = getSupabaseSafe();
     
     const oldLine = await getPhoneLineById(lineId);
@@ -251,6 +303,7 @@ export const updatePhoneLine = async (
 };
 
 export const deletePhoneLine = async (id: string): Promise<void> => {
+    if (!navigator.onLine) throw new Error("حذف خط تلفن در حالت آفلاین امکان‌پذیر نیست.");
     const client = getSupabaseSafe();
     const line = await getPhoneLineById(id);
     const { error } = await client.from(TABLES.PHONE_LINES).delete().eq('id', id);
@@ -315,6 +368,7 @@ export const batchUpdatePortAssignments = async (
     creations: Array<{ phoneNumber: string; consumerUnit: string | null; nodeId: string; portAddress: string; }>,
     node: Node
 ) => {
+    if (!navigator.onLine) throw new Error("تغییر پورت‌ها در حالت آفلاین امکان‌پذیر نیست.");
     const client = getSupabaseSafe();
     
     if (deletions.length > 0) {

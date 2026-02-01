@@ -4,8 +4,7 @@ import { logAuditAction } from './auditService';
 import { deleteImages } from './storageService';
 import { Asset, Location } from '../types';
 import { TABLES } from '../constants';
-
-const CACHE_KEY_PREFIX = 'offline_assets_cache_';
+import { CACHE_KEYS, queryLocalData, queueOfflineAction, generateUUID } from './offlineService';
 
 const getCurrentUserForLog = (): string => {
   try {
@@ -21,6 +20,12 @@ const getCurrentUserForLog = (): string => {
 };
 
 export const getAssetById = async (id: string): Promise<Asset | null> => {
+  // Always query local data first if offline
+  if (!navigator.onLine) {
+      const { data } = queryLocalData<Asset>(CACHE_KEYS.ASSETS, (item) => item.id === id, 1, 1);
+      return data.length > 0 ? data[0] : null;
+  }
+
   const client = getSupabaseSafe();
   try {
     const { data, error } = await client
@@ -33,18 +38,9 @@ export const getAssetById = async (id: string): Promise<Asset | null> => {
     }
     return data;
   } catch (err: any) {
-      // Offline fallback: check if we have this asset in our list cache
-      // Note: This is a simple fallback and relies on the user having visited the list page.
-      if (err.message && (err.message.includes('Failed to fetch') || err.message.includes('Network request failed'))) {
-          console.warn('Network error, attempting to find asset in local cache...');
-          const cacheKey = `${CACHE_KEY_PREFIX}all`; // Try general cache
-          const cached = localStorage.getItem(cacheKey);
-          if (cached) {
-              const { assets } = JSON.parse(cached);
-              const found = assets.find((a: Asset) => a.id === id);
-              if (found) return found;
-          }
-      }
+      console.warn('Fallback to local cache due to error:', err);
+      const { data } = queryLocalData<Asset>(CACHE_KEYS.ASSETS, (item) => item.id === id, 1, 1);
+      if (data.length > 0) return data[0];
       throw err;
   }
 };
@@ -59,10 +55,42 @@ export const getAssets = async (
   verifiedFilter: boolean | null = null,
   externalFilter: boolean | null = null,
 ): Promise<{ assets: Asset[]; total: number }> => {
-  const client = getSupabaseSafe();
   
-  // Construct a cache key based on filters to allow partial caching
-  const cacheKey = `${CACHE_KEY_PREFIX}${page}_${searchTerm}_${statusFilter}_${categoryFilter}_${locationFilter}`;
+  // Offline Mode Logic
+  if (!navigator.onLine) {
+      const result = queryLocalData<Asset>(
+          CACHE_KEYS.ASSETS,
+          (item) => {
+              // 1. Exclude transferred (mimicking SQL .neq('status', 'منتقل شده'))
+              if (item.status === 'منتقل شده') return false;
+
+              // 2. Search Term
+              if (searchTerm) {
+                  const term = searchTerm.toLowerCase();
+                  const matches = (
+                      (item.name && item.name.toLowerCase().includes(term)) ||
+                      (item.description && item.description.toLowerCase().includes(term)) ||
+                      (item.asset_id_number && String(item.asset_id_number).includes(term))
+                  );
+                  if (!matches) return false;
+              }
+
+              // 3. Filters
+              if (statusFilter && item.status !== statusFilter) return false;
+              if (categoryFilter && item.category_id !== categoryFilter) return false;
+              if (locationFilter && item.location_id !== locationFilter) return false;
+              if (verifiedFilter !== null && item.is_verified !== verifiedFilter) return false;
+              if (externalFilter !== null && item.is_external !== externalFilter) return false;
+
+              return true;
+          },
+          page,
+          pageSize
+      );
+      return { assets: result.data, total: result.total };
+  }
+
+  const client = getSupabaseSafe();
   
   try {
       let query = client
@@ -93,35 +121,9 @@ export const getAssets = async (
 
       if (error) throw error;
 
-      const result = { assets: data || [], total: count || 0 };
-      
-      // Save to cache on success
-      try {
-          localStorage.setItem(cacheKey, JSON.stringify(result));
-          // Also cache a generic "latest" key for fallback if user is on page 1 with no filters
-          if (page === 1 && !searchTerm && !statusFilter && !categoryFilter) {
-               localStorage.setItem(`${CACHE_KEY_PREFIX}all`, JSON.stringify(result));
-          }
-      } catch (e) {
-          console.warn('Failed to cache assets to localStorage (likely quota exceeded).');
-      }
-
-      return result;
+      return { assets: data || [], total: count || 0 };
 
   } catch (error: any) {
-      // Offline Strategy
-      if (error.message && (error.message.includes('Failed to fetch') || error.message.includes('Network request failed'))) {
-          console.warn('Network error, loading assets from cache...');
-          const cachedData = localStorage.getItem(cacheKey);
-          if (cachedData) {
-              return JSON.parse(cachedData);
-          }
-          // Fallback to "all" cache if specific filter cache missing
-          const allCached = localStorage.getItem(`${CACHE_KEY_PREFIX}all`);
-          if (allCached) {
-              return JSON.parse(allCached);
-          }
-      }
       console.error('Error fetching assets:', error.message);
       throw error;
   }
@@ -132,6 +134,28 @@ export const getTransferredAssets = async (
   page: number = 1,
   pageSize: number = 10,
 ): Promise<{ assets: Asset[]; total: number }> => {
+  // Offline fallback
+  if (!navigator.onLine) {
+      const result = queryLocalData<Asset>(
+          CACHE_KEYS.ASSETS,
+          (item) => {
+              if (item.status !== 'منتقل شده') return false;
+              if (searchTerm) {
+                  const term = searchTerm.toLowerCase();
+                  return (
+                      (item.name && item.name.toLowerCase().includes(term)) ||
+                      (item.transferred_to && item.transferred_to.toLowerCase().includes(term)) ||
+                      (item.asset_id_number && String(item.asset_id_number).includes(term))
+                  );
+              }
+              return true;
+          },
+          page,
+          pageSize
+      );
+      return { assets: result.data, total: result.total };
+  }
+
   const client = getSupabaseSafe();
   let query = client
     .from(TABLES.ASSETS)
@@ -165,6 +189,11 @@ export const getAssetCountByField = async (
   fieldName: 'category_id' | 'location_id',
   id: string
 ): Promise<number> => {
+  if (!navigator.onLine) {
+      const { total } = queryLocalData<Asset>(CACHE_KEYS.ASSETS, (item) => (item as any)[fieldName] === id, 1, 999999);
+      return total;
+  }
+
   const client = getSupabaseSafe();
   const { count, error } = await client
     .from(TABLES.ASSETS)
@@ -179,6 +208,15 @@ export const getAssetCountByField = async (
 };
 
 export const createAsset = async (asset: Omit<Asset, 'id' | 'created_at' | 'updated_at' | 'transferred_to' | 'transferred_at'>): Promise<Asset> => {
+  // Offline Creation
+  if (!navigator.onLine) {
+      const newId = generateUUID();
+      const newAsset = { ...asset, id: newId, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+      
+      await queueOfflineAction(TABLES.ASSETS, 'INSERT', newAsset, newId, CACHE_KEYS.ASSETS);
+      return newAsset as Asset;
+  }
+
   const client = getSupabaseSafe();
   const { data, error } = await client
     .from(TABLES.ASSETS)
@@ -197,6 +235,15 @@ export const updateAsset = async (
   id: string,
   updates: Partial<Omit<Asset, 'id' | 'created_at' | 'updated_at' | 'image_urls'>>,
 ): Promise<Asset> => {
+  // Offline Update
+  if (!navigator.onLine) {
+      const updatedData = { ...updates, updated_at: new Date().toISOString() };
+      await queueOfflineAction(TABLES.ASSETS, 'UPDATE', updatedData, id, CACHE_KEYS.ASSETS);
+      // Return a fake combined object so UI updates
+      const oldAsset = await getAssetById(id);
+      return { ...oldAsset, ...updatedData } as Asset;
+  }
+
   const client = getSupabaseSafe();
   const oldAsset = await getAssetById(id);
   const { data, error } = await client
@@ -259,15 +306,21 @@ export const transferAsset = async (
   id: string,
   transferredTo: string,
 ): Promise<Asset> => {
-  const client = getSupabaseSafe();
-  const oldAsset = await getAssetById(id);
-  if (!oldAsset) throw new Error("تجهیز برای انتقال یافت نشد.");
-
   const updates = {
     status: 'منتقل شده',
     transferred_to: transferredTo,
     transferred_at: new Date().toISOString(),
   };
+
+  if (!navigator.onLine) {
+      await queueOfflineAction(TABLES.ASSETS, 'UPDATE', updates, id, CACHE_KEYS.ASSETS);
+      const oldAsset = await getAssetById(id);
+      return { ...oldAsset, ...updates } as Asset;
+  }
+
+  const client = getSupabaseSafe();
+  const oldAsset = await getAssetById(id);
+  if (!oldAsset) throw new Error("تجهیز برای انتقال یافت نشد.");
 
   const { data, error } = await client
     .from(TABLES.ASSETS)
@@ -295,6 +348,11 @@ export const transferAsset = async (
 
 
 export const deleteAsset = async (id: string): Promise<void> => {
+  if (!navigator.onLine) {
+      await queueOfflineAction(TABLES.ASSETS, 'DELETE', {}, id, CACHE_KEYS.ASSETS);
+      return;
+  }
+
   const client = getSupabaseSafe();
   const assetToDelete = await getAssetById(id);
   if (assetToDelete?.image_urls && assetToDelete.image_urls.length > 0) {
@@ -312,6 +370,12 @@ export const checkAssetIdNumberExists = async (
   asset_id_number: string,
   excludeId?: string,
 ): Promise<boolean> => {
+  if (!navigator.onLine) {
+      // Basic offline check
+      const { data } = queryLocalData<Asset>(CACHE_KEYS.ASSETS, a => a.asset_id_number === asset_id_number && a.id !== excludeId);
+      return data.length > 0;
+  }
+
   const client = getSupabaseSafe();
   let query = client
     .from(TABLES.ASSETS)
@@ -334,6 +398,7 @@ export const updateAssetImageUrls = async (
   assetId: string,
   newImageUrls: string[],
 ): Promise<Asset> => {
+  if (!navigator.onLine) throw new Error("بروزرسانی تصاویر در حالت آفلاین امکان‌پذیر نیست.");
   const client = getSupabaseSafe();
   const { data, error } = await client
     .from(TABLES.ASSETS)

@@ -1,14 +1,15 @@
 
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { HomeIcon, SettingsIcon } from '../ui/Icons';
+import { HomeIcon } from '../ui/Icons';
 import { useAuth } from '../../AuthContext';
 import { getTasks } from '../../services/taskService';
 import { getAllFaults } from '../../services/faultService';
 import { getCNSFaultReports } from '../../services/cnsService';
 import { getMaintenanceSchedules, isScheduleDue } from '../../services/cnsMaintenanceService';
-import { getMyShiftRequests } from '../../services/shiftService'; // Import Shift Service
-import { FaultStatus, CNSFaultStatus, ShiftRequestStatus } from '../../types'; // Import Shift Types
+import { getMyShiftRequests } from '../../services/shiftService'; 
+import { FaultStatus, CNSFaultStatus, ShiftRequestStatus } from '../../types';
+import { getSupabaseSafe } from '../../services/client';
 
 interface HeaderProps {
   title: string;
@@ -20,31 +21,67 @@ export const Header: React.FC<HeaderProps> = ({ title }) => {
   const location = useLocation();
   
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const [showNotifMenu, setShowNotifMenu] = useState(false); // State for notification dropdown
+  const [showNotifMenu, setShowNotifMenu] = useState(false);
 
   // Notification Counts
   const [taskCount, setTaskCount] = useState(0);
-  const [shiftCount, setShiftCount] = useState(0); // Count for actionable shifts
+  const [shiftCount, setShiftCount] = useState(0); 
   const [faultCount, setFaultCount] = useState(0);
+
+  // Connection Status
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [dbConnected, setDbConnected] = useState(false);
 
   const handleLogout = () => {
       logout();
       navigate('/login');
   };
 
+  // Connectivity Check (Every 30 seconds)
+  useEffect(() => {
+      const checkConnection = async () => {
+          const online = navigator.onLine;
+          setIsOnline(online);
+          
+          if (online) {
+              try {
+                  const client = getSupabaseSafe();
+                  const { error } = await client.from('app_settings').select('key').limit(1).maybeSingle();
+                  setDbConnected(!error);
+              } catch (e) {
+                  setDbConnected(false);
+              }
+          } else {
+              setDbConnected(false);
+          }
+      };
+
+      // Check immediately
+      checkConnection();
+
+      const interval = setInterval(checkConnection, 30000);
+      window.addEventListener('online', checkConnection);
+      window.addEventListener('offline', checkConnection);
+
+      return () => {
+          clearInterval(interval);
+          window.removeEventListener('online', checkConnection);
+          window.removeEventListener('offline', checkConnection);
+      };
+  }, []);
+
   useEffect(() => {
       const fetchCounts = async () => {
-          if (!user) return;
+          if (!user || !dbConnected) return;
           
           try {
               const currentUserName = user.full_name || user.username;
               
-              // Standardizing error handling for each call
               const tasksPromise = getTasks('', 'PENDING', currentUserName).catch(() => []);
               const phoneFaultsPromise = getAllFaults().catch(() => []);
               const cnsFaultsPromise = getCNSFaultReports('ALL').catch(() => []);
               const schedulesPromise = getMaintenanceSchedules().catch(() => []);
-              const shiftsPromise = getMyShiftRequests(user.id).catch(() => []); // Fetch shifts
+              const shiftsPromise = getMyShiftRequests(user.id).catch(() => []); 
 
               const [tasks, phoneFaults, cnsFaults, schedules, shifts] = await Promise.all([
                   tasksPromise, 
@@ -56,7 +93,6 @@ export const Header: React.FC<HeaderProps> = ({ title }) => {
 
               setTaskCount(tasks.length);
 
-              // Calculate Shift Notifications (Actionable items)
               const actionableShifts = shifts.filter(req => 
                   (req.status === ShiftRequestStatus.PENDING_PROVIDER && req.provider_id === user.id) ||
                   (req.status === ShiftRequestStatus.PENDING_SUPERVISOR && req.supervisor_id === user.id)
@@ -69,21 +105,18 @@ export const Header: React.FC<HeaderProps> = ({ title }) => {
 
               setFaultCount(openPhoneFaults + openCNSFaults + dueSchedules);
           } catch (err: any) {
-              console.error("Error fetching notification counts:", err?.message || err);
+              console.error("Error fetching notification counts:", err);
           }
       };
 
       fetchCounts();
       const interval = setInterval(fetchCounts, 60000);
       return () => clearInterval(interval);
-  }, [user, location.pathname]);
+  }, [user, location.pathname, dbConnected]);
 
   const isHomePage = location.pathname === '/';
   const totalNotifications = taskCount + shiftCount;
 
-  /**
-   * Logical Back Navigation
-   */
   const handleBack = () => {
     const path = location.pathname;
     if (path === '/') return;
@@ -121,13 +154,18 @@ export const Header: React.FC<HeaderProps> = ({ title }) => {
             <HomeIcon className="fa-lg" />
           </Link>
 
-          <h1 className="text-sm sm:text-xl font-bold leading-tight truncate">
+          <h1 className="text-sm sm:text-xl font-bold leading-tight truncate flex items-center">
             {title}
+            {/* Connectivity Dot */}
+            <span 
+                className={`w-3 h-3 rounded-full mr-3 border-2 border-white shadow-sm ${dbConnected ? 'bg-green-400' : 'bg-red-500 animate-pulse'}`}
+                title={dbConnected ? "آنلاین - متصل به سرور" : "آفلاین - قطع ارتباط"}
+            ></span>
           </h1>
         </div>
         
         <div className="flex items-center gap-1 sm:gap-3 flex-shrink-0">
-            {/* Notification Dropdown (Bell) */}
+            {/* Notification Dropdown */}
             <div className="relative">
                 <button 
                     onClick={() => setShowNotifMenu(!showNotifMenu)}
@@ -150,7 +188,6 @@ export const Header: React.FC<HeaderProps> = ({ title }) => {
                                 اعلان‌های سیستم
                             </div>
                             
-                            {/* Task Notifications */}
                             <Link 
                                 to="/tasks/list?assigned=me&status=pending" 
                                 className="flex items-center justify-between px-4 py-3 hover:bg-indigo-50 transition-colors border-b border-gray-100"
@@ -169,7 +206,6 @@ export const Header: React.FC<HeaderProps> = ({ title }) => {
                                 )}
                             </Link>
 
-                            {/* Shift Notifications */}
                             <Link 
                                 to="/shifts" 
                                 className="flex items-center justify-between px-4 py-3 hover:bg-indigo-50 transition-colors"
@@ -198,7 +234,7 @@ export const Header: React.FC<HeaderProps> = ({ title }) => {
                 )}
             </div>
 
-            {/* Alert Icon (Faults & Maintenance) */}
+            {/* Alert Icon */}
             <Link 
                 to="/open-processes" 
                 className="relative p-2 rounded-full hover:bg-white/20 transition-colors text-white"

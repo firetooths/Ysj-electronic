@@ -1,8 +1,9 @@
 
 import React, { createContext, useState, useEffect, useContext, useCallback } from 'react';
 import { Category, Location, SupabaseContextType, Node, WireColor, Tag, ContactGroup, AssetStatusItem } from './types';
-import { supabase, supabaseConfigError, getCategories, getLocations, seedDefaultData, getNodes, getSetting, getTags, getContactGroups, getSupabaseSafe, getAssetStatuses } from './supabaseService';
+import { supabase, supabaseConfigError, getSetting } from './supabaseService';
 import { DEFAULT_WIRE_COLORS, SETTINGS_KEYS } from './constants';
+import { loadFromCache, CACHE_KEYS, syncFullDatabase } from './services/offlineService';
 
 const SupabaseContext = createContext<SupabaseContextType | undefined>(undefined);
 
@@ -24,78 +25,60 @@ export const SupabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchCategories = useCallback(async () => {
-    try {
-      const fetchedCategories = await getCategories();
-      setCategories(fetchedCategories);
-    } catch (err: any) {
-      console.error(`خطا در بارگذاری دسته بندی‌ها: ${err.message}`);
-    }
+  /**
+   * Loads all critical data directly from LocalStorage.
+   * This ensures the app works immediately offline.
+   */
+  const loadLocalData = useCallback(() => {
+      console.log("Loading data from local cache...");
+      setCategories(loadFromCache<Category>(CACHE_KEYS.CATEGORIES));
+      setLocations(loadFromCache<Location>(CACHE_KEYS.LOCATIONS));
+      setAssetStatuses(loadFromCache<AssetStatusItem>(CACHE_KEYS.ASSET_STATUSES));
+      setNodes(loadFromCache<Node>(CACHE_KEYS.NODES));
+      setTags(loadFromCache<Tag>(CACHE_KEYS.TAGS));
+      setContactGroups(loadFromCache<ContactGroup>(CACHE_KEYS.CATEGORIES)); // Note: ContactGroups often mapped to Categories key in this app logic, check constants if distinct
+      
+      // Wire Colors might be in Settings or defaults
+      const colorsRaw = localStorage.getItem('offline_wire_colors'); // We might need to cache this specifically if it comes from settings
+      if (colorsRaw) {
+          setWireColors(JSON.parse(colorsRaw));
+      } else {
+          setWireColors(DEFAULT_WIRE_COLORS);
+      }
   }, []);
 
-  const fetchLocations = useCallback(async () => {
-    try {
-      const fetchedLocations = await getLocations();
-      setLocations(fetchedLocations);
-    } catch (err: any) {
-      console.error(`خطا در بارگذاری محل‌ها: ${err.message}`);
-    }
-  }, []);
+  /**
+   * Background Sync: Fetches from DB and updates LocalStorage + State
+   */
+  const performSync = useCallback(async () => {
+      if (!navigator.onLine) return;
+      
+      try {
+          const success = await syncFullDatabase();
+          if (success) {
+              loadLocalData(); // Refresh state with new data
+              
+              // Refresh Wire Colors specially as they are in Settings
+              try {
+                  const colorsJson = await getSetting(SETTINGS_KEYS.PHONE_WIRE_COLORS);
+                  const colors = colorsJson ? JSON.parse(colorsJson) : DEFAULT_WIRE_COLORS;
+                  setWireColors(colors);
+                  localStorage.setItem('offline_wire_colors', JSON.stringify(colors));
+              } catch(e) {}
+          }
+      } catch (e) {
+          console.error("Background sync failed:", e);
+      }
+  }, [loadLocalData]);
 
-  const fetchAssetStatuses = useCallback(async () => {
-    try {
-      const statuses = await getAssetStatuses();
-      setAssetStatuses(statuses);
-    } catch (err: any) {
-      console.error(`خطا در بارگذاری وضعیت‌های اموال: ${err.message}`);
-    }
-  }, []);
-  
-  const fetchNodes = useCallback(async () => {
-    try {
-      const fetchedNodes = await getNodes();
-      setNodes(fetchedNodes);
-    } catch (err: any) {
-      console.error(`خطا در بارگذاری گره‌ها: ${err.message}`);
-    }
-  }, []);
-
-  const fetchWireColors = useCallback(async () => {
-    try {
-      const colorsJson = await getSetting(SETTINGS_KEYS.PHONE_WIRE_COLORS);
-      const colors = colorsJson ? JSON.parse(colorsJson) : DEFAULT_WIRE_COLORS;
-      setWireColors(colors);
-    } catch (err: any) {
-      console.error(`خطا در بارگذاری رنگ‌های زوج سیم: ${err.message}`);
-      setWireColors(DEFAULT_WIRE_COLORS);
-    }
-  }, []);
-
-  const fetchTags = useCallback(async () => {
-    try {
-      const fetchedTags = await getTags();
-      setTags(fetchedTags);
-    } catch (err: any) {
-      console.error(`خطا در بارگذاری تگ‌ها: ${err.message}`);
-    }
-  }, []);
-
-  const fetchContactGroups = useCallback(async () => {
-    try {
-      const groups = await getContactGroups();
-      setContactGroups(groups);
-    } catch (err: any) {
-      console.error(`خطا در بارگذاری گروه‌های مخاطبین: ${err.message}`);
-    }
-  }, []);
-
-  const refreshCategories = useCallback(async () => { await fetchCategories(); }, [fetchCategories]);
-  const refreshLocations = useCallback(async () => { await fetchLocations(); }, [fetchLocations]);
-  const refreshAssetStatuses = useCallback(async () => { await fetchAssetStatuses(); }, [fetchAssetStatuses]);
-  const refreshNodes = useCallback(async () => { await fetchNodes(); }, [fetchNodes]);
-  const refreshWireColors = useCallback(async () => { await fetchWireColors(); }, [fetchWireColors]);
-  const refreshTags = useCallback(async () => { await fetchTags(); }, [fetchTags]);
-  const refreshContactGroups = useCallback(async () => { await fetchContactGroups(); }, [fetchContactGroups]);
+  // Exposed refresh functions (now just trigger the sync logic or re-read cache)
+  const refreshCategories = useCallback(async () => { performSync(); }, [performSync]);
+  const refreshLocations = useCallback(async () => { performSync(); }, [performSync]);
+  const refreshAssetStatuses = useCallback(async () => { performSync(); }, [performSync]);
+  const refreshNodes = useCallback(async () => { performSync(); }, [performSync]);
+  const refreshWireColors = useCallback(async () => { performSync(); }, [performSync]);
+  const refreshTags = useCallback(async () => { performSync(); }, [performSync]);
+  const refreshContactGroups = useCallback(async () => { performSync(); }, [performSync]);
 
   useEffect(() => {
     if (supabaseConfigError) {
@@ -104,55 +87,21 @@ export const SupabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return;
     }
 
-    const initializeData = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        // Quick connectivity check before attempting heavy operations
-        // Removed the throw Error here to allow offline mode to proceed
-        const client = getSupabaseSafe();
-        const { error: pingError } = await client.from('app_settings').select('key').limit(1).maybeSingle();
-        
-        if (pingError && pingError.message && pingError.message.includes('Failed to fetch')) {
-             console.warn('عدم دسترسی به سرور. برنامه در حالت آفلاین اجرا می‌شود.');
-        } else if (navigator.onLine) {
-            // Only attempt seeding if we are online and reachable
-            await seedDefaultData();
-        }
+    // 1. Immediate Offline Load
+    loadLocalData();
+    setIsLoading(false); // App is ready to use with cached data
 
-        await Promise.all([
-          fetchCategories(),
-          fetchLocations(),
-          fetchAssetStatuses(),
-          fetchNodes(),
-          fetchWireColors(),
-          fetchTags(),
-          fetchContactGroups(),
-        ]);
-      } catch (err: any) {
-        const msg = err.message || `خطا در مقداردهی اولیه داده‌ها.`;
-        // Only set error if it's critical, otherwise log and let app run (potentially with empty data)
-        console.error('Initialization error:', err);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+    // 2. Trigger Background Sync
+    performSync();
 
-    initializeData();
-  }, [fetchCategories, fetchLocations, fetchAssetStatuses, fetchNodes, fetchWireColors, fetchTags, fetchContactGroups]);
+  }, [loadLocalData, performSync]);
 
   if (supabaseConfigError) {
     return (
       <div className="flex justify-center items-center min-h-screen bg-gray-100">
-        <div className="bg-red-50 border-r-4 border-red-500 text-red-700 p-4 shadow-md rounded-md text-right max-w-lg mx-auto" role="alert">
-          <div className="flex items-center justify-end">
-            <p className="font-bold text-lg">خطای پیکربندی Supabase</p>
-            <svg className="h-6 w-6 text-red-500 mr-4 ml-2" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-5a1 1 0 102 0V9a1 1 0 10-2 0v4zm1-8a1 1 0 100 2 1 1 0 000-2z" clipRule="evenodd"></path>
-            </svg>
-          </div>
-          <p className="text-sm mt-2">{supabaseConfigError}</p>
-          <p className="text-xs mt-2">لطفاً فایل .env.local را در ریشه پروژه ایجاد کرده و متغیرهای `VITE_SUPABASE_URL` و `VITE_SUPABASE_ANON_KEY` را مطابق دستورالعمل در `supabaseService.ts` تنظیم کنید.</p>
+        <div className="bg-red-50 border-r-4 border-red-500 text-red-700 p-4 shadow-md rounded-md text-right max-w-lg mx-auto">
+          <p className="font-bold">خطای پیکربندی</p>
+          <p>{supabaseConfigError}</p>
         </div>
       </div>
     );

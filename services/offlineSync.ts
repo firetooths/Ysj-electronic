@@ -5,20 +5,35 @@ import { TABLES } from '../constants';
 
 const SYNC_TABLES = Object.values(TABLES);
 
+// Callback type for progress reporting
+export type SyncProgressCallback = (progress: number, currentTable: string, count: number) => void;
+
 /**
  * Downloads all data from Supabase and stores it in Dexie.
+ * Supports a callback for real-time UI updates.
  */
-export const pullAllData = async () => {
+export const pullAllData = async (onProgress?: SyncProgressCallback) => {
   const client = getSupabaseSafe();
   console.log("Starting Full Sync (Pull)...");
   const now = new Date().toISOString();
+  
+  const totalTables = SYNC_TABLES.length;
 
-  for (const tableName of SYNC_TABLES) {
+  for (let i = 0; i < totalTables; i++) {
+    const tableName = SYNC_TABLES[i];
     try {
-      // Limit to 1000 for safety, paging could be added
-      const { data, error } = await client.from(tableName).select('*').limit(2000);
+      // Increase limit to ensure we get most data for offline usage
+      // For very large datasets, pagination should be implemented here.
+      const { data, error, count } = await client
+        .from(tableName)
+        .select('*', { count: 'exact' })
+        .limit(5000); 
+
       if (error) {
-          if (error.code === '42P01') continue; 
+          if (error.code === '42P01') {
+              console.warn(`Table ${tableName} does not exist on server.`);
+              continue;
+          } 
           console.error(`Error pulling table ${tableName}:`, error);
           continue;
       }
@@ -26,10 +41,21 @@ export const pullAllData = async () => {
       if (data) {
         const table = (db as any)[tableName];
         if (table) {
-            await table.clear(); // Clear old cache to avoid ghosts
-            await table.bulkPut(data);
+            await table.clear(); // Clear old cache to avoid ghosts (deleted items)
+            if (data.length > 0) {
+                await table.bulkPut(data);
+            }
         }
       }
+
+      // Calculate progress percentage
+      const progress = Math.round(((i + 1) / totalTables) * 100);
+      
+      // Report back to UI if callback is provided
+      if (onProgress) {
+          onProgress(progress, tableName, data?.length || 0);
+      }
+
     } catch (e) {
       console.error(`Exception pulling table ${tableName}:`, e);
     }
@@ -83,6 +109,7 @@ export const pushOfflineChanges = async () => {
   }
   
   // Refresh local data after push to ensure consistency (IDs, triggers)
+  // We pass empty callback to pullAllData to skip UI updates during background sync
   await pullAllData(); 
 };
 

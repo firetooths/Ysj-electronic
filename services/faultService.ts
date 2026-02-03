@@ -96,7 +96,7 @@ export const addVoiceNoteToFault = async (faultId: string, audioBlob: Blob, reco
 };
 
 export const updateFault = async (id: string, updates: Partial<PhoneLineFault>) => {
-    return handleOfflineUpdate(TABLES.PHONE_LINE_FAULTS, id, updates, async () => {
+    return handleOfflineUpdate<PhoneLineFault>(TABLES.PHONE_LINE_FAULTS, id, updates, async () => {
         const client = getSupabaseSafe();
         const { data, error } = await client.from(TABLES.PHONE_LINE_FAULTS).update(updates).eq('id', id).select().single();
         if (error) throw error;

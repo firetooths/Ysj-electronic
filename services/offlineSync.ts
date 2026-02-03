@@ -6,7 +6,7 @@ import { TABLES } from '../constants';
 const SYNC_TABLES = Object.values(TABLES);
 
 // Callback type for progress reporting
-export type SyncProgressCallback = (progress: number, currentTable: string, count: number) => void;
+export type SyncProgressCallback = (progress: number, currentTable: string, count: number, success: boolean) => void;
 
 /**
  * Downloads all data from Supabase and stores it in Dexie.
@@ -21,10 +21,13 @@ export const pullAllData = async (onProgress?: SyncProgressCallback) => {
 
   for (let i = 0; i < totalTables; i++) {
     const tableName = SYNC_TABLES[i];
+    let rowCount = 0;
+    let isSuccess = false;
+
     try {
       // Increase limit to ensure we get most data for offline usage
       // For very large datasets, pagination should be implemented here.
-      const { data, error, count } = await client
+      const { data, error } = await client
         .from(tableName)
         .select('*', { count: 'exact' })
         .limit(5000); 
@@ -32,32 +35,37 @@ export const pullAllData = async (onProgress?: SyncProgressCallback) => {
       if (error) {
           if (error.code === '42P01') {
               console.warn(`Table ${tableName} does not exist on server.`);
-              continue;
-          } 
-          console.error(`Error pulling table ${tableName}:`, error);
-          continue;
-      }
-      
-      if (data) {
-        const table = (db as any)[tableName];
-        if (table) {
-            await table.clear(); // Clear old cache to avoid ghosts (deleted items)
-            if (data.length > 0) {
-                await table.bulkPut(data);
+              // If table doesn't exist (e.g. view or deprecated), we treat as success with 0 rows to not break flow
+              isSuccess = true;
+          } else {
+              console.error(`Error pulling table ${tableName}:`, error);
+              isSuccess = false;
+          }
+      } else {
+          if (data) {
+            const table = (db as any)[tableName];
+            if (table) {
+                await table.clear(); // Clear old cache to avoid ghosts (deleted items)
+                if (data.length > 0) {
+                    await table.bulkPut(data);
+                }
             }
-        }
-      }
-
-      // Calculate progress percentage
-      const progress = Math.round(((i + 1) / totalTables) * 100);
-      
-      // Report back to UI if callback is provided
-      if (onProgress) {
-          onProgress(progress, tableName, data?.length || 0);
+            rowCount = data.length;
+          }
+          isSuccess = true;
       }
 
     } catch (e) {
       console.error(`Exception pulling table ${tableName}:`, e);
+      isSuccess = false;
+    }
+
+    // Calculate progress percentage
+    const progress = Math.round(((i + 1) / totalTables) * 100);
+    
+    // Report back to UI if callback is provided
+    if (onProgress) {
+        onProgress(progress, tableName, rowCount, isSuccess);
     }
   }
 
@@ -82,9 +90,6 @@ export const pushOfflineChanges = async () => {
       let error = null;
 
       if (action === 'CREATE') {
-        // Omit generated ID if it's not a UUID (though we generate UUIDs now)
-        // If supabase generates IDs, we might have a conflict or need to update the local ID map.
-        // For simplicity with UUIDs, we just insert.
         const { error: insertError } = await client.from(table).insert(data);
         error = insertError;
       } else if (action === 'UPDATE') {
@@ -100,8 +105,6 @@ export const pushOfflineChanges = async () => {
         await db.syncQueue.delete(id!);
       } else {
         console.error(`Failed to push action ${id} (${action} on ${table}):`, error);
-        // If error is "Row not found" for update/delete, maybe it was deleted on server? Remove from queue?
-        // For now keep in queue to retry or manual intervention.
       }
     } catch (e) {
       console.error("Exception processing queue item:", e);
@@ -109,7 +112,7 @@ export const pushOfflineChanges = async () => {
   }
   
   // Refresh local data after push to ensure consistency (IDs, triggers)
-  // We pass empty callback to pullAllData to skip UI updates during background sync
+  // Passing empty callback
   await pullAllData(); 
 };
 

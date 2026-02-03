@@ -4,7 +4,7 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { pullAllData } from '../../services/offlineSync';
 import { TABLE_NAMES_FA } from '../../constants';
-import { CheckIcon } from '../ui/Icons';
+import { CheckIcon, CloseIcon } from '../ui/Icons';
 
 interface ManualSyncModalProps {
     isOpen: boolean;
@@ -15,6 +15,7 @@ interface SyncDetail {
     tableName: string;
     displayName: string;
     count: number;
+    success: boolean;
 }
 
 export const ManualSyncModal: React.FC<ManualSyncModalProps> = ({ isOpen, onClose }) => {
@@ -44,7 +45,7 @@ export const ManualSyncModal: React.FC<ManualSyncModalProps> = ({ isOpen, onClos
         setProgress(0);
 
         try {
-            await pullAllData((prog, table, count) => {
+            await pullAllData((prog, table, count, success) => {
                 setProgress(prog);
                 setCurrentTable(table);
                 setDetails(prev => [
@@ -52,7 +53,8 @@ export const ManualSyncModal: React.FC<ManualSyncModalProps> = ({ isOpen, onClos
                     { 
                         tableName: table, 
                         displayName: TABLE_NAMES_FA[table] || table, 
-                        count: count 
+                        count: count,
+                        success: success
                     }
                 ]);
             });
@@ -90,7 +92,7 @@ export const ManualSyncModal: React.FC<ManualSyncModalProps> = ({ isOpen, onClos
                 {(isSyncing || isComplete || error) && (
                     <div className="space-y-4">
                         {/* Progress Bar */}
-                        <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+                        <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden" dir="ltr">
                             <div 
                                 className={`h-full transition-all duration-300 ease-out flex items-center justify-center text-[10px] text-white ${isComplete ? 'bg-green-500' : 'bg-indigo-600'}`}
                                 style={{ width: `${progress}%` }}
@@ -101,7 +103,7 @@ export const ManualSyncModal: React.FC<ManualSyncModalProps> = ({ isOpen, onClos
                         
                         {isSyncing && (
                             <p className="text-center text-sm text-indigo-700 animate-pulse font-medium">
-                                در حال دریافت جدول: {TABLE_NAMES_FA[currentTable] || currentTable}...
+                                در حال بررسی جدول: {TABLE_NAMES_FA[currentTable] || currentTable}...
                             </p>
                         )}
 
@@ -127,7 +129,11 @@ export const ManualSyncModal: React.FC<ManualSyncModalProps> = ({ isOpen, onClos
                                             <td className="px-4 py-2 text-sm text-gray-700">{d.displayName}</td>
                                             <td className="px-4 py-2 text-sm text-center font-mono">{d.count}</td>
                                             <td className="px-4 py-2 text-center">
-                                                <i className="fas fa-check text-green-500"></i>
+                                                {d.success ? (
+                                                    <i className="fas fa-check text-green-500"></i>
+                                                ) : (
+                                                    <i className="fas fa-times text-red-500"></i>
+                                                )}
                                             </td>
                                         </tr>
                                     ))}
@@ -139,7 +145,7 @@ export const ManualSyncModal: React.FC<ManualSyncModalProps> = ({ isOpen, onClos
                             <div className="mt-4 animate-fade-in text-center">
                                 <div className="text-green-600 font-bold text-lg mb-4 flex items-center justify-center">
                                     <CheckIcon className="ml-2 fa-2x" />
-                                    عملیات با موفقیت انجام شد
+                                    عملیات پایان یافت
                                 </div>
                                 <Button variant="secondary" onClick={onClose} fullWidth>بستن</Button>
                             </div>

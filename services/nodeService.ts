@@ -3,13 +3,21 @@ import { getSupabaseSafe } from './client';
 import { Node, NodeConfig, NodeType } from '../types';
 import { TABLES, STORAGE_BUCKETS } from '../constants';
 import { processImageForUpload } from '../utils/imageProcessor';
+import { db } from '../db';
 
 // --- API Functions for Phone Line Nodes ---
 export const getNodes = async (): Promise<Node[]> => {
-    const client = getSupabaseSafe();
-    const { data, error } = await client.from(TABLES.NODES).select('*').order('name');
-    if (error) throw error;
-    return data as Node[];
+    try {
+        if (!navigator.onLine) throw new Error('Offline');
+        const client = getSupabaseSafe();
+        const { data, error } = await client.from(TABLES.NODES).select('*').order('name');
+        if (error) throw error;
+        return data as Node[];
+    } catch (error) {
+        // Offline
+        console.warn('Fetching nodes from local DB');
+        return await db.nodes.orderBy('name').toArray() as Node[];
+    }
 };
 
 export const createNode = async (node: Omit<Node, 'id' | 'created_at'>): Promise<Node> => {
@@ -33,15 +41,18 @@ export const deleteNode = async (id: string): Promise<void> => {
 };
 
 export const getNodeUsageCount = async (id: string): Promise<number> => {
-  const client = getSupabaseSafe();
-  const { count, error } = await client.from(TABLES.ROUTE_NODES).select('id', { count: 'exact', head: true }).eq('node_id', id);
-  if (error) throw error;
-  return count || 0;
+  try {
+      if (!navigator.onLine) throw new Error('Offline');
+      const client = getSupabaseSafe();
+      const { count, error } = await client.from(TABLES.ROUTE_NODES).select('id', { count: 'exact', head: true }).eq('node_id', id);
+      if (error) throw error;
+      return count || 0;
+  } catch (e) {
+      return await db.route_nodes.where('node_id').equals(id).count();
+  }
 };
 
 export const getNodeStats = async (node: Node): Promise<{ total: number, used: number, free: number, lastActivity: { date: string, port: string } | null }> => {
-    const client = getSupabaseSafe();
-    
     // 1. Calculate Total Ports
     let total = 0;
     const c = node.config;
@@ -58,36 +69,42 @@ export const getNodeStats = async (node: Node): Promise<{ total: number, used: n
             break;
     }
 
-    // 2. Get Used Ports
-    const { count, error } = await client.from(TABLES.ROUTE_NODES).select('id', { count: 'exact', head: true }).eq('node_id', node.id);
-    if (error) throw error;
-    const used = count || 0;
-
-    // 3. Get Last Activity
-    // We try to find the most recently updated phone line connected to this node
+    let used = 0;
     let lastActivity = null;
-    const { data: recentNode, error: recentError } = await client
-        .from(TABLES.ROUTE_NODES)
-        .select('port_address, phone_line:line_id(updated_at)')
-        .eq('node_id', node.id)
-        // We can't sort by phone_line.updated_at directly easily in simple join without complex query
-        // So we just fetch some and sort in JS or use another approach.
-        // Better: Query route_nodes, fetch associated lines, sort. 
-        // OR: Assume created_at of route_node is close enough? RouteNodes don't have created_at usually.
-        // Let's rely on PhoneLine updated_at.
-        .limit(50); // Fetch a batch
-        
-    if (!recentError && recentNode && recentNode.length > 0) {
-        // Filter and sort
-        const validNodes = recentNode.filter((n: any) => n.phone_line?.updated_at);
-        validNodes.sort((a: any, b: any) => new Date(b.phone_line.updated_at).getTime() - new Date(a.phone_line.updated_at).getTime());
-        
-        if (validNodes.length > 0) {
-            lastActivity = {
-                date: validNodes[0].phone_line.updated_at,
-                port: validNodes[0].port_address
-            };
+
+    try {
+        if (!navigator.onLine) throw new Error('Offline');
+        const client = getSupabaseSafe();
+
+        // 2. Get Used Ports
+        const { count, error } = await client.from(TABLES.ROUTE_NODES).select('id', { count: 'exact', head: true }).eq('node_id', node.id);
+        if (error) throw error;
+        used = count || 0;
+
+        // 3. Get Last Activity
+        const { data: recentNode, error: recentError } = await client
+            .from(TABLES.ROUTE_NODES)
+            .select('port_address, phone_line:line_id(updated_at)')
+            .eq('node_id', node.id)
+            .limit(50); // Fetch a batch
+            
+        if (!recentError && recentNode && recentNode.length > 0) {
+            const validNodes = recentNode.filter((n: any) => n.phone_line?.updated_at);
+            validNodes.sort((a: any, b: any) => new Date(b.phone_line.updated_at).getTime() - new Date(a.phone_line.updated_at).getTime());
+            
+            if (validNodes.length > 0) {
+                lastActivity = {
+                    date: validNodes[0].phone_line.updated_at,
+                    port: validNodes[0].port_address
+                };
+            }
         }
+    } catch (e) {
+        // Offline logic
+        used = await db.route_nodes.where('node_id').equals(node.id).count();
+        
+        // Approximation for last activity since we can't join easily in Dexie to sort by phone_line.updated_at
+        // We'll just check some entries if needed, but for now skip complex lastActivity in offline mode or keep null
     }
 
     return {

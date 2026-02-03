@@ -3,6 +3,7 @@ import { getSupabaseSafe } from './client';
 import { PhoneLine, RouteNode, Node, Tag, BulkPhoneLine } from '../types';
 import { TABLES } from '../constants';
 import { logPhoneLineAction } from './phoneLogService';
+import { db } from '../db';
 
 export const getPhoneLines = async (
     page: number, 
@@ -10,101 +11,188 @@ export const getPhoneLines = async (
     searchTerm: string = '',
     tagIds: string[] = [],
 ): Promise<{ lines: PhoneLine[], total: number }> => {
-    const client = getSupabaseSafe();
-    const from = (page - 1) * pageSize;
-    const to = from + pageSize - 1;
+    try {
+        if (!navigator.onLine) throw new Error('Offline');
 
-    let lineIdsFromTags: string[] | null = null;
-    if (tagIds.length > 0) {
-        const { data: lineTagData, error: tagFilterError } = await client
-            .from(TABLES.PHONE_LINE_TAGS)
-            .select('phone_line_id')
-            .in('tag_id', tagIds);
-        if (tagFilterError) throw tagFilterError;
-        
-        lineIdsFromTags = lineTagData ? [...new Set((lineTagData as any[]).map((d: any) => d.phone_line_id).filter((id: any): id is string => typeof id === 'string'))] : [];
+        const client = getSupabaseSafe();
+        const from = (page - 1) * pageSize;
+        const to = from + pageSize - 1;
 
-        if (lineIdsFromTags.length === 0) {
-            return { lines: [], total: 0 };
+        let lineIdsFromTags: string[] | null = null;
+        if (tagIds.length > 0) {
+            const { data: lineTagData, error: tagFilterError } = await client
+                .from(TABLES.PHONE_LINE_TAGS)
+                .select('phone_line_id')
+                .in('tag_id', tagIds);
+            if (tagFilterError) throw tagFilterError;
+            
+            lineIdsFromTags = lineTagData ? [...new Set((lineTagData as any[]).map((d: any) => d.phone_line_id).filter((id: any): id is string => typeof id === 'string'))] : [];
+
+            if (lineIdsFromTags.length === 0) {
+                return { lines: [], total: 0 };
+            }
         }
+
+        let query = client
+            .from(TABLES.PHONE_LINES)
+            .select('*, tags(*)', { count: 'exact' });
+
+        if (searchTerm.length >= 3) {
+            query = query.or(`phone_number.ilike.%${searchTerm}%,consumer_unit.ilike.%${searchTerm}%`);
+        }
+
+        if (lineIdsFromTags !== null) {
+            query = query.in('id', lineIdsFromTags);
+        }
+        
+        const { data, error, count } = await query.order('phone_number').range(from, to);
+
+        if (error) throw error;
+        return { lines: data as PhoneLine[], total: count || 0 };
+    } catch (error) {
+        console.warn('Fetching phone lines from local DB...');
+        // Basic Offline Support for List
+        let collection = db.phone_lines.toCollection();
+        
+        // Dexie filtering is limited compared to SQL, simple search only
+        if (searchTerm.length >= 3) {
+            const lowerTerm = searchTerm.toLowerCase();
+            collection = collection.filter(l => 
+                l.phone_number.includes(lowerTerm) || 
+                (l.consumer_unit && l.consumer_unit.toLowerCase().includes(lowerTerm))
+            );
+        }
+
+        const count = await collection.count();
+        const data = await collection.offset((page - 1) * pageSize).limit(pageSize).toArray();
+        
+        // Enrich with tags (manual join)
+        const linesWithTags = await Promise.all(data.map(async (line) => {
+            const lineTagsRel = await db.phone_line_tags.where('phone_line_id').equals(line.id).toArray();
+            const tagIds = lineTagsRel.map(r => r.tag_id);
+            const tags = await db.tags.where('id').anyOf(tagIds).toArray();
+            return { ...line, tags };
+        }));
+
+        return { lines: linesWithTags as PhoneLine[], total: count };
     }
-
-    let query = client
-        .from(TABLES.PHONE_LINES)
-        .select('*, tags(*)', { count: 'exact' });
-
-    if (searchTerm.length >= 3) {
-        query = query.or(`phone_number.ilike.%${searchTerm}%,consumer_unit.ilike.%${searchTerm}%`);
-    }
-
-    if (lineIdsFromTags !== null) {
-        query = query.in('id', lineIdsFromTags);
-    }
-    
-    const { data, error, count } = await query.order('phone_number').range(from, to);
-
-    if (error) throw error;
-    return { lines: data as PhoneLine[], total: count || 0 };
 };
 
 export const getPhoneLinesByTagId = async (tagId: string): Promise<PhoneLine[]> => {
-    const client = getSupabaseSafe();
-    // Use inner join on phone_line_tags to filter by tag_id
-    // Fetch route_nodes and their nodes for the report
-    const { data, error } = await client
-        .from(TABLES.PHONE_LINES)
-        .select('*, route_nodes(*, node:nodes(*)), phone_line_tags!inner(tag_id)')
-        .eq('phone_line_tags.tag_id', tagId)
-        .order('phone_number');
+    try {
+        if (!navigator.onLine) throw new Error('Offline');
+        const client = getSupabaseSafe();
+        const { data, error } = await client
+            .from(TABLES.PHONE_LINES)
+            .select('*, route_nodes(*, node:nodes(*)), phone_line_tags!inner(tag_id)')
+            .eq('phone_line_tags.tag_id', tagId)
+            .order('phone_number');
 
-    if (error) throw error;
+        if (error) throw error;
 
-    // Sort route nodes for each line
-    const lines = data as PhoneLine[];
-    lines.forEach(line => {
-        if (line.route_nodes) {
-            line.route_nodes.sort((a, b) => a.sequence - b.sequence);
-        }
-    });
+        const lines = data as PhoneLine[];
+        lines.forEach(line => {
+            if (line.route_nodes) {
+                line.route_nodes.sort((a, b) => a.sequence - b.sequence);
+            }
+        });
 
-    return lines;
+        return lines;
+    } catch (error) {
+        // Offline Fallback
+        const lineTags = await db.phone_line_tags.where('tag_id').equals(tagId).toArray();
+        const lineIds = lineTags.map(lt => lt.phone_line_id);
+        const lines = await db.phone_lines.where('id').anyOf(lineIds).toArray();
+        
+        // Enrich with route nodes
+        const enrichedLines = await Promise.all(lines.map(async (line) => {
+            const routeNodes = await db.route_nodes.where('line_id').equals(line.id).toArray();
+            // Enrich nodes
+            const enrichedNodes = await Promise.all(routeNodes.map(async (rn) => {
+                const node = await db.nodes.get(rn.node_id);
+                return { ...rn, node };
+            }));
+            enrichedNodes.sort((a, b) => a.sequence - b.sequence);
+            return { ...line, route_nodes: enrichedNodes };
+        }));
+        
+        return enrichedLines.sort((a, b) => a.phone_number.localeCompare(b.phone_number)) as PhoneLine[];
+    }
 };
 
 export const getPhoneLineById = async (id: string): Promise<PhoneLine | null> => {
-  const client = getSupabaseSafe();
-  const { data, error } = await client
-    .from(TABLES.PHONE_LINES)
-    .select('*, route_nodes:route_nodes(*, node:nodes(*)), tags(*)')
-    .eq('id', id)
-    .single();
-  if (error) {
-    if (error.code === 'PGRST116') return null;
-    throw error;
+  try {
+      if (!navigator.onLine) throw new Error('Offline');
+      const client = getSupabaseSafe();
+      const { data, error } = await client
+        .from(TABLES.PHONE_LINES)
+        .select('*, route_nodes:route_nodes(*, node:nodes(*)), tags(*)')
+        .eq('id', id)
+        .single();
+      if (error) {
+        if (error.code === 'PGRST116') return null;
+        throw error;
+      }
+      if (data.route_nodes) {
+        data.route_nodes.sort((a: any, b: any) => a.sequence - b.sequence);
+      }
+      return data as PhoneLine;
+  } catch (error) {
+      // Offline
+      const line = await db.phone_lines.get(id);
+      if (!line) return null;
+      
+      const routeNodes = await db.route_nodes.where('line_id').equals(id).toArray();
+      const enrichedNodes = await Promise.all(routeNodes.map(async (rn) => {
+          const node = await db.nodes.get(rn.node_id);
+          return { ...rn, node };
+      }));
+      enrichedNodes.sort((a, b) => a.sequence - b.sequence);
+      
+      const lineTagsRel = await db.phone_line_tags.where('phone_line_id').equals(id).toArray();
+      const tagIds = lineTagsRel.map(r => r.tag_id);
+      const tags = await db.tags.where('id').anyOf(tagIds).toArray();
+
+      return { ...line, route_nodes: enrichedNodes, tags } as PhoneLine;
   }
-  // Sort the route nodes by sequence client-side
-  if (data.route_nodes) {
-    data.route_nodes.sort((a: any, b: any) => a.sequence - b.sequence);
-  }
-  return data as PhoneLine;
 };
 
 
 export const getPhoneLineByNumber = async (phoneNumber: string): Promise<PhoneLine | null> => {
-    const client = getSupabaseSafe();
-    const { data, error } = await client
-      .from(TABLES.PHONE_LINES)
-      .select('*, route_nodes:route_nodes(*, node:nodes(*)), tags(*)')
-      .eq('phone_number', phoneNumber)
-      .single();
-    if (error) {
-        if (error.code === 'PGRST116') return null; // Not found is not an error
-        throw error;
+    try {
+        if (!navigator.onLine) throw new Error('Offline');
+        const client = getSupabaseSafe();
+        const { data, error } = await client
+          .from(TABLES.PHONE_LINES)
+          .select('*, route_nodes:route_nodes(*, node:nodes(*)), tags(*)')
+          .eq('phone_number', phoneNumber)
+          .single();
+        if (error) {
+            if (error.code === 'PGRST116') return null;
+            throw error;
+        }
+        if (data.route_nodes) {
+            data.route_nodes.sort((a: any, b: any) => a.sequence - b.sequence);
+        }
+        return data as PhoneLine;
+    } catch (error) {
+        // Offline
+        const line = await db.phone_lines.where('phone_number').equals(phoneNumber).first();
+        if (!line) return null;
+        
+        const routeNodes = await db.route_nodes.where('line_id').equals(line.id).toArray();
+        const enrichedNodes = await Promise.all(routeNodes.map(async (rn) => {
+            const node = await db.nodes.get(rn.node_id);
+            return { ...rn, node };
+        }));
+        enrichedNodes.sort((a, b) => a.sequence - b.sequence);
+        
+        const lineTagsRel = await db.phone_line_tags.where('phone_line_id').equals(line.id).toArray();
+        const tagIds = lineTagsRel.map(r => r.tag_id);
+        const tags = await db.tags.where('id').anyOf(tagIds).toArray();
+
+        return { ...line, route_nodes: enrichedNodes, tags } as PhoneLine;
     }
-    // Sort the route nodes by sequence client-side
-    if (data.route_nodes) {
-        data.route_nodes.sort((a: any, b: any) => a.sequence - b.sequence);
-    }
-    return data as PhoneLine;
 };
 
 export const deleteRouteNodes = async (routeNodeIds: string[]): Promise<void> => {
@@ -159,6 +247,10 @@ export const createPhoneLine = async (
     }
 
     await logPhoneLineAction(line.id, logParts.join('، '));
+    
+    // Offline Action: Push will handle standard actions, but for complex transaction it is hard.
+    // Assuming online for writes generally, or queue logic handles simple inserts.
+    
     return line;
 };
 
@@ -260,54 +352,100 @@ export const deletePhoneLine = async (id: string): Promise<void> => {
 
 export const checkPortInUse = async (nodeId: string, portAddress: string, excludeLineId?: string): Promise<{ inUse: boolean, phoneNumber?: string, routeNodeId?: string }> => {
     const client = getSupabaseSafe();
-    let query = client.from(TABLES.ROUTE_NODES)
-        .select('id, line_id, phone_line:line_id(phone_number)')
-        .eq('node_id', nodeId)
-        .eq('port_address', portAddress);
+    
+    try {
+        if (!navigator.onLine) throw new Error('Offline');
+        
+        let query = client.from(TABLES.ROUTE_NODES)
+            .select('id, line_id, phone_line:line_id(phone_number)')
+            .eq('node_id', nodeId)
+            .eq('port_address', portAddress);
 
-    if (excludeLineId) {
-        query = query.neq('line_id', excludeLineId);
-    }
+        if (excludeLineId) {
+            query = query.neq('line_id', excludeLineId);
+        }
 
-    const { data, error } = await query.maybeSingle();
+        const { data, error } = await query.maybeSingle();
 
-    if (error) {
-        throw error;
-    }
+        if (error) throw error;
 
-    if (data) {
-        const phoneNumber = (data.phone_line as any)?.phone_number;
-        return {
-            inUse: true,
-            phoneNumber: phoneNumber || 'نامشخص',
-            routeNodeId: data.id,
-        };
+        if (data) {
+            const phoneNumber = (data.phone_line as any)?.phone_number;
+            return {
+                inUse: true,
+                phoneNumber: phoneNumber || 'نامشخص',
+                routeNodeId: data.id,
+            };
+        }
+    } catch (e) {
+        // Offline check
+        const conflict = await db.route_nodes
+            .where('node_id').equals(nodeId)
+            .and(rn => rn.port_address === portAddress && rn.line_id !== excludeLineId)
+            .first();
+            
+        if (conflict) {
+            const line = await db.phone_lines.get(conflict.line_id);
+            return {
+                inUse: true,
+                phoneNumber: line?.phone_number || 'نامشخص',
+                routeNodeId: conflict.id
+            };
+        }
     }
 
     return { inUse: false };
 };
 
 export const getLinesForNode = async (nodeId: string): Promise<RouteNode[]> => {
-    const client = getSupabaseSafe();
-    const { data, error } = await client
-        .from(TABLES.ROUTE_NODES)
-        .select('*, phone_line:line_id(*)')
-        .eq('node_id', nodeId);
+    try {
+        // Online first
+        if (navigator.onLine) {
+            const client = getSupabaseSafe();
+            const { data, error } = await client
+                .from(TABLES.ROUTE_NODES)
+                .select('*, phone_line:line_id(*)')
+                .eq('node_id', nodeId);
 
-    if (error) throw error;
-    return data || [];
+            if (error) throw error;
+            return data || [];
+        } else {
+            throw new Error('Offline');
+        }
+    } catch (err: any) {
+        console.warn('Fallback to local DB for connected lines');
+        // Offline Fallback
+        const routeNodes = await db.route_nodes.where('node_id').equals(nodeId).toArray();
+        
+        // Manual Join
+        const enriched = await Promise.all(routeNodes.map(async (rn) => {
+            const line = await db.phone_lines.get(rn.line_id);
+            return {
+                ...rn,
+                phone_line: line
+            };
+        }));
+        
+        return enriched as RouteNode[];
+    }
 };
 
 export const getPhoneLineDetailsByNumber = async (phoneNumber: string): Promise<Pick<PhoneLine, 'id' | 'phone_number' | 'consumer_unit'> | null> => {
-    const client = getSupabaseSafe();
-    const { data, error } = await client
-        .from(TABLES.PHONE_LINES)
-        .select('id, phone_number, consumer_unit')
-        .eq('phone_number', phoneNumber)
-        .maybeSingle();
+    try {
+        if (!navigator.onLine) throw new Error('Offline');
+        const client = getSupabaseSafe();
+        const { data, error } = await client
+            .from(TABLES.PHONE_LINES)
+            .select('id, phone_number, consumer_unit')
+            .eq('phone_number', phoneNumber)
+            .maybeSingle();
 
-    if (error) throw error;
-    return data;
+        if (error) throw error;
+        return data;
+    } catch (e) {
+        const line = await db.phone_lines.where('phone_number').equals(phoneNumber).first();
+        return line ? { id: line.id, phone_number: line.phone_number, consumer_unit: line.consumer_unit } : null;
+    }
 };
 
 export const batchUpdatePortAssignments = async (

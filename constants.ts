@@ -18,26 +18,12 @@ export const FAULT_TYPES: FaultType[] = [
 ];
 
 // Database Version Tracking
-export const DB_VERSION = '1.0.5';
+export const DB_VERSION = '1.0.6';
 export const LATEST_SQL_UPDATE = `-- Version ${DB_VERSION}
--- Table: shift_requests
-CREATE TABLE IF NOT EXISTS public.shift_requests (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  request_type text NOT NULL, -- 'LEAVE', 'SICK_LEAVE', 'EXCHANGE', 'INVITATION'
-  requester_id uuid REFERENCES public.users(id),
-  provider_id uuid REFERENCES public.users(id), -- For EXCHANGE
-  supervisor_id uuid REFERENCES public.users(id), -- Head of shift
-  dates text[] NOT NULL, -- Array of ISO dates
-  description text,
-  status text DEFAULT 'PENDING', -- 'PENDING_PROVIDER', 'PENDING_SUPERVISOR', 'APPROVED', 'REJECTED'
-  created_at timestamp with time zone DEFAULT now(),
-  updated_at timestamp with time zone DEFAULT now()
-);
-
--- RLS for shift_requests
-ALTER TABLE public.shift_requests ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Enable all access for shift_requests" ON public.shift_requests;
-CREATE POLICY "Enable all access for shift_requests" ON public.shift_requests FOR ALL USING (true) WITH CHECK (true);
+-- Settings for Backup/Restore Password
+INSERT INTO public.app_settings (key, value)
+VALUES ('backup_password', '"123456"')
+ON CONFLICT (key) DO NOTHING;
 `;
 
 // Supabase table names
@@ -94,7 +80,7 @@ export const SETTINGS_KEYS = {
   DASHBOARD_ORDER: 'dashboard_module_order',
   PHONE_WIRE_COLORS: 'phone_wire_colors',
   PHONE_LINE_DASHBOARD_CARDS: 'phone_line_dashboard_cards',
-  SHIFT_TEMPLATES: 'shift_notification_templates', // New Key
+  SHIFT_TEMPLATES: 'shift_notification_templates', 
 };
 
 export const DASHBOARD_MODULES_INFO = [

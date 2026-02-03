@@ -1,5 +1,5 @@
 {
-  "name": "copy-of-v26.1-build-git---offline",
+  "name": "v26.2-build-git---start-new-offline",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -20,7 +20,7 @@
     "bcryptjs": "^3.0.3",
     "jalaali-js": "^1.2.8",
     "@capacitor/cli": "^8.0.0",
-    "@capacitor/core": "^8.0.2"
+    "dexie": "^4.3.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

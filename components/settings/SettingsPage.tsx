@@ -23,6 +23,7 @@ import { ASSET_STATUSES, SETTINGS_KEYS, DASHBOARD_MODULES_INFO, LATEST_SQL_UPDAT
 import { useNavigate } from 'react-router-dom';
 import { getNotificationDefaults, DEFAULT_NOTIFICATION_SETTINGS } from '../../services/notificationService';
 import { createBackup, restoreBackup, getLastSyncDate } from '../../services/offlineSync';
+import { ManualSyncModal } from './ManualSyncModal'; // Import the new modal
 
 const SYSTEM_FONT_OPTION_LABEL = 'فونت پیش‌فرض سیستم';
 const SYSTEM_FONT_OPTION_VALUE = 'System Default';
@@ -152,6 +153,9 @@ export const GlobalSettings: React.FC = () => {
   const [isRestoring, setIsRestoring] = useState(false);
   const [restoreStep, setRestoreStep] = useState<1 | 2>(1);
   const backupInputRef = useRef<HTMLInputElement>(null);
+  
+  // Manual Sync Modal
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
 
   const loadSettings = async () => {
     setIsLoading(true);
@@ -302,11 +306,20 @@ export const GlobalSettings: React.FC = () => {
                             آخرین نسخه دیتابیس آفلاین دریافتی: <span className="font-bold font-mono dir-ltr inline-block">{lastSyncDate ? new Date(lastSyncDate).toLocaleString('fa-IR') : 'هرگز'}</span>
                         </p>
                         
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+                        <div className="mb-6">
+                            <Button variant="primary" onClick={() => setIsSyncModalOpen(true)} fullWidth className="bg-blue-600 hover:bg-blue-700 shadow-lg py-3">
+                                <i className="fas fa-sync ml-2"></i> دریافت دستی دیتابیس آفلاین (Full Sync)
+                            </Button>
+                            <p className="text-xs text-gray-500 mt-2 text-center">
+                                این گزینه تمام اطلاعات را از سرور دانلود کرده و در دیتابیس محلی (Dexie) ذخیره می‌کند. برای رفع مشکل عدم نمایش اطلاعات در حالت آفلاین از این گزینه استفاده کنید.
+                            </p>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6 border-t border-yellow-200 pt-6">
                             <div className="bg-white p-4 rounded border">
-                                <h4 className="font-bold mb-2">تهیه نسخه پشتیبان</h4>
+                                <h4 className="font-bold mb-2">تهیه نسخه پشتیبان (JSON)</h4>
                                 <p className="text-xs text-gray-500 mb-4">دانلود تمام اطلاعات دیتابیس محلی در یک فایل JSON.</p>
-                                <Button variant="primary" onClick={handleDownloadBackup}>
+                                <Button variant="secondary" onClick={handleDownloadBackup}>
                                     <i className="fas fa-download ml-2"></i> دانلود فایل بکاپ
                                 </Button>
                             </div>
@@ -476,6 +489,15 @@ export const GlobalSettings: React.FC = () => {
                 </div>
             )}
         </main>
+        
+        <ManualSyncModal 
+            isOpen={isSyncModalOpen}
+            onClose={() => {
+                setIsSyncModalOpen(false);
+                // Refresh data timestamp on close
+                getLastSyncDate().then(setLastSyncDate);
+            }}
+        />
     </div>
   );
 };

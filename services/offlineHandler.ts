@@ -24,7 +24,10 @@ export const handleOfflineInsert = async <T extends { id?: string }>(
         if (!navigator.onLine) throw new Error('Offline');
         return await supabaseCall();
     } catch (error: any) {
-        console.warn(`Offline Insert for ${tableName}:`, error);
+        // Only log warning if it's not a standard fetch error (which is expected offline)
+        if (error.message !== 'Failed to fetch' && error.message !== 'Offline') {
+             console.warn(`Offline Insert for ${tableName}:`, error);
+        }
         
         // Generate a temporary ID if not present
         const offlineData = { ...data };
@@ -67,7 +70,9 @@ export const handleOfflineUpdate = async <T>(
         if (!navigator.onLine) throw new Error('Offline');
         return await supabaseCall();
     } catch (error: any) {
-        console.warn(`Offline Update for ${tableName}:`, error);
+        if (error.message !== 'Failed to fetch' && error.message !== 'Offline') {
+            console.warn(`Offline Update for ${tableName}:`, error);
+        }
 
         // 1. Update Local DB
         try {
@@ -102,7 +107,9 @@ export const handleOfflineDelete = async (
         if (!navigator.onLine) throw new Error('Offline');
         await supabaseCall();
     } catch (error: any) {
-        console.warn(`Offline Delete for ${tableName}:`, error);
+        if (error.message !== 'Failed to fetch' && error.message !== 'Offline') {
+            console.warn(`Offline Delete for ${tableName}:`, error);
+        }
 
         // 1. Delete from Local DB
         try {
@@ -134,7 +141,10 @@ export const handleOfflineRead = async <T>(
         if (!navigator.onLine) throw new Error('Offline');
         return await supabaseCall();
     } catch (error: any) {
-        console.warn(`Offline Read for ${tableName}:`, error);
+        // Suppress warning for standard offline errors to reduce console noise
+        if (error.message !== 'Failed to fetch' && error.message !== 'Offline') {
+            console.warn(`Offline Read for ${tableName}:`, error);
+        }
         return await fallbackLogic();
     }
 };

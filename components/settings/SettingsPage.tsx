@@ -1,15 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import {
-  getSavedFonts,
-  addFont,
-  removeFont,
-  getAppFontName,
-  setAppFont,
-  getPdfFont,
-  setPdfFont,
-} from '../../utils/fontManager';
-import { CustomFont, CustomDashboardCard, AssetStatus, NotificationDefaults } from '../../types';
+import { CustomDashboardCard, AssetStatus, NotificationDefaults } from '../../types';
 import { Button } from '../ui/Button';
 import { Select } from '../ui/Select';
 import { Modal } from '../ui/Modal';
@@ -23,10 +14,7 @@ import { ASSET_STATUSES, SETTINGS_KEYS, DASHBOARD_MODULES_INFO, LATEST_SQL_UPDAT
 import { useNavigate } from 'react-router-dom';
 import { getNotificationDefaults, DEFAULT_NOTIFICATION_SETTINGS } from '../../services/notificationService';
 import { createBackup, restoreBackup, getLastSyncDate } from '../../services/offlineSync';
-import { ManualSyncModal } from './ManualSyncModal'; // Import the new modal
-
-const SYSTEM_FONT_OPTION_LABEL = 'فونت پیش‌فرض سیستم';
-const SYSTEM_FONT_OPTION_VALUE = 'System Default';
+import { ManualSyncModal } from './ManualSyncModal';
 
 interface SmsConfig {
     baseUrl: string;
@@ -133,11 +121,8 @@ export const AssetSettingsPage: React.FC = () => {
 // --- GlobalSettings ---
 export const GlobalSettings: React.FC = () => {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'fonts' | 'sms' | 'telegram' | 'notifications' | 'dashboard' | 'sql' | 'backup'>('fonts');
+  const [activeTab, setActiveTab] = useState<'sms' | 'telegram' | 'notifications' | 'dashboard' | 'sql' | 'backup'>('sms');
 
-  const [fonts, setFonts] = useState<CustomFont[]>([]);
-  const [selectedAppFont, setSelectedAppFont] = useState('');
-  const [selectedPdfFontId, setSelectedPdfFontId] = useState('');
   const [smsConfig, setSmsConfig] = useState<SmsConfig>({ baseUrl: "https://edge.ippanel.com/v1", apiKey: "", fromNumber: "+983000505" });
   const [telegramConfig, setTelegramConfig] = useState<TelegramConfig>({ botToken: "", botUsername: "", isEnabled: false });
   const [notifyDefaults, setNotifyDefaults] = useState<NotificationDefaults>(DEFAULT_NOTIFICATION_SETTINGS);
@@ -160,12 +145,6 @@ export const GlobalSettings: React.FC = () => {
   const loadSettings = async () => {
     setIsLoading(true);
     try {
-      const savedFonts = await getSavedFonts();
-      setFonts(savedFonts);
-      setSelectedAppFont(await getAppFontName());
-      const pdfFont = await getPdfFont();
-      setSelectedPdfFontId(pdfFont?.id || '');
-      
       const savedSmsConfig = await getSetting(SETTINGS_KEYS.SMS_CONFIG);
       if (savedSmsConfig) setSmsConfig(JSON.parse(savedSmsConfig));
       
@@ -193,16 +172,6 @@ export const GlobalSettings: React.FC = () => {
   };
 
   useEffect(() => { loadSettings(); }, []);
-
-  const handleAppFontChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
-      setSelectedAppFont(e.target.value);
-      await setAppFont(e.target.value);
-  };
-  
-  const handlePdfFontChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
-      setSelectedPdfFontId(e.target.value);
-      await setPdfFont(e.target.value);
-  };
 
   const handleSaveSmsConfig = async () => { await setSetting(SETTINGS_KEYS.SMS_CONFIG, JSON.stringify(smsConfig)); alert('ذخیره شد'); };
   const handleSaveTelegramConfig = async () => { await setSetting(SETTINGS_KEYS.TELEGRAM_CONFIG, JSON.stringify(telegramConfig)); alert('ذخیره شد'); };
@@ -287,9 +256,9 @@ export const GlobalSettings: React.FC = () => {
             </div>
             
             <div className="flex border-b border-gray-200 mb-6 overflow-x-auto">
-                {['fonts', 'sms', 'telegram', 'notifications', 'dashboard', 'sql', 'backup'].map(tab => (
+                {['sms', 'telegram', 'notifications', 'dashboard', 'sql', 'backup'].map(tab => (
                     <button key={tab} className={`py-2 px-4 text-sm font-medium whitespace-nowrap ${activeTab === tab ? 'border-b-2 border-indigo-500 text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setActiveTab(tab as any)}>
-                        {tab === 'fonts' ? 'فونت' : tab === 'sms' ? 'پیامک' : tab === 'telegram' ? 'تلگرام' : tab === 'notifications' ? 'اعلان‌ها' : tab === 'dashboard' ? 'داشبورد' : tab === 'sql' ? 'SQL' : 'بکاپ و بازگردانی'}
+                        {tab === 'sms' ? 'پیامک' : tab === 'telegram' ? 'تلگرام' : tab === 'notifications' ? 'اعلان‌ها' : tab === 'dashboard' ? 'داشبورد' : tab === 'sql' ? 'SQL' : 'بکاپ و بازگردانی'}
                     </button>
                 ))}
             </div>
@@ -363,16 +332,6 @@ export const GlobalSettings: React.FC = () => {
                                 <Button onClick={handleSaveBackupPassword}>ذخیره رمز</Button>
                             </div>
                         </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Fonts Tab */}
-            {activeTab === 'fonts' && (
-                <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <Select label="فونت پیش‌فرض برنامه" options={[{value: SYSTEM_FONT_OPTION_VALUE, label: SYSTEM_FONT_OPTION_LABEL}, ...fonts.map(f => ({value: f.name, label: f.name}))]} value={selectedAppFont} onChange={handleAppFontChange} />
-                        <Select label="فونت خروجی PDF" options={[{value: '', label: 'پیش‌فرض (Helvetica)'}, ...fonts.map(f => ({value: f.id, label: f.name}))]} value={selectedPdfFontId} onChange={handlePdfFontChange} />
                     </div>
                 </div>
             )}

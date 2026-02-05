@@ -3,7 +3,7 @@
 <html lang="en" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#4f46e5">
@@ -23,20 +23,27 @@
 
       :root {
         --main-font: 'IranSans', Tahoma, Arial, sans-serif !important;
+        /* Safe Area for Mobile Status Bar */
+        --safe-area-top: env(safe-area-inset-top, 0px);
       }
 
       * {
         font-family: var(--main-font);
-        -webkit-tap-highlight-color: transparent; /* Remove blue highlight on tap for mobile */
+        -webkit-tap-highlight-color: transparent;
       }
 
       html, body, #root {
         font-family: var(--main-font);
         height: 100%;
         overflow-x: hidden;
+        background-color: #f3f4f6;
       }
 
-      /* Native scroll feel */
+      /* Base padding for mobile headers */
+      .safe-top-padding {
+        padding-top: var(--safe-area-top);
+      }
+
       .custom-scrollbar {
         -webkit-overflow-scrolling: touch;
       }
@@ -46,7 +53,6 @@
       ::-webkit-scrollbar-thumb { background: #888; border-radius: 10px; }
       ::-webkit-scrollbar-thumb:hover { background: #555; }
       
-      /* Disable text selection for UI elements to feel more native */
       button, a, .nav-item {
         user-select: none;
       }
@@ -75,15 +81,12 @@
 </head>
 <body class="bg-gray-100 antialiased text-gray-800">
     <div id="root"></div>
-
     <script type="module" src="index.tsx"></script>
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('./sw.js').then(reg => {
-            console.log('SW Registered for Native Experience');
-          }).catch(err => {
-              console.warn('ServiceWorker registration failed:', err);
+          navigator.serviceWorker.register('./sw.js').catch(err => {
+              console.warn('SW Registration failed:', err);
           });
         });
       }

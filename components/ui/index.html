@@ -5,74 +5,112 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>مدیریت اموال فرودگاه یاسوج</title>
-    <!-- Tailwind CSS CDN (Pinned Version) -->
-    <script src="https://cdn.tailwindcss.com/3.4.3" crossorigin="anonymous"></script>
-    <!-- Font Awesome CDN -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" integrity="sha512-SnH5WK+bZxgPHs44uWIX+LLJAJ9/2PkPKZ5QiAj6Ta86w+fsb2TkcmfRyVX3pBnMFcV7oQPJkl9QevSCWr3W6A==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com/3.4.3"></script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
     <style>
-      /* Font Definition */
+      /* 1. تعریف فونت از ریشه پروژه */
       @font-face {
         font-family: 'IranSans';
-        src: url('/utils/IranSans.ttf') format('truetype');
+        src: url('/IranSans.ttf') format('truetype');
         font-weight: normal;
         font-style: normal;
         font-display: swap;
       }
 
-      /* Global Font Application */
-      body {
-        font-family: 'IranSans', sans-serif !important;
+      /* 2. اولویت‌دهی تهاجمی CSS */
+      :root {
+        --main-font: 'IranSans', Tahoma, Arial, sans-serif !important;
       }
 
-      /* Basic scrollbar styling for better aesthetics */
-      ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
+      * {
+        font-family: var(--main-font);
       }
-      ::-webkit-scrollbar-track {
-        background: #f1f1f1;
-        border-radius: 10px;
+
+      html, body, #root {
+        font-family: var(--main-font);
       }
-      ::-webkit-scrollbar-thumb {
-        background: #888;
-        border-radius: 10px;
+
+      /* بنر دیباگ فونت */
+      #font-error-banner {
+        display: none;
+        background: #fee2e2;
+        color: #b91c1c;
+        padding: 10px;
+        text-align: center;
+        font-weight: bold;
+        border-bottom: 2px solid #ef4444;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 10000;
       }
-      ::-webkit-scrollbar-thumb:hover {
-        background: #555;
-      }
+
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 10px; }
+      ::-webkit-scrollbar-thumb { background: #888; border-radius: 10px; }
+      ::-webkit-scrollbar-thumb:hover { background: #555; }
     </style>
 <script type="importmap">
 {
   "imports": {
-    "html2canvas": "https://aistudiocdn.com/html2canvas@^1.4.1",
-    "react-router-dom": "https://aistudiocdn.com/react-router-dom@^7.9.6",
-    "jspdf": "https://aistudiocdn.com/jspdf@^3.0.3",
-    "jspdf-autotable": "https://aistudiocdn.com/jspdf-autotable@^5.0.2",
-    "react-dom": "https://aistudiocdn.com/react-dom@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "xlsx": "https://aistudiocdn.com/xlsx@^0.18.5",
-    "@supabase/supabase-js": "https://aistudiocdn.com/@supabase/supabase-js@^2.82.0",
-    "bcryptjs": "https://aistudiocdn.com/bcryptjs@^3.0.3",
-    "jalaali-js": "https://esm.sh/jalaali-js@^1.2.8",
-    "@capacitor/cli": "https://esm.sh/@capacitor/cli@^8.0.0",
-    "dexie": "https://esm.sh/dexie@^4.3.0"
+    "html2canvas": "https://esm.sh/html2canvas@1.4.1",
+    "react-router-dom": "https://esm.sh/react-router-dom@6.22.3",
+    "jspdf": "https://esm.sh/jspdf@2.5.1",
+    "jspdf-autotable": "https://esm.sh/jspdf-autotable@3.8.2",
+    "react-dom": "https://esm.sh/react-dom@18.2.0",
+    "react-dom/": "https://esm.sh/react-dom@18.2.0/",
+    "react": "https://esm.sh/react@18.2.0",
+    "react/": "https://esm.sh/react@18.2.0/",
+    "xlsx": "https://esm.sh/xlsx@0.18.5",
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.39.8",
+    "bcryptjs": "https://esm.sh/bcryptjs@2.4.3",
+    "jalaali-js": "https://esm.sh/jalaali-js@1.2.6",
+    "dexie": "https://esm.sh/dexie@3.2.4"
   }
 }
 </script>
 </head>
-<body class="bg-gray-100 font-sans antialiased text-gray-800">
+<body class="bg-gray-100 antialiased text-gray-800">
+    <div id="font-error-banner"></div>
     <div id="root"></div>
+
     <script type="module" src="/index.tsx"></script>
     <script>
+      const banner = document.getElementById('font-error-banner');
+      
+      async function debugFont() {
+        console.log("🔍 Font Diagnostic: Checking root directory...");
+        const fontPath = '/IranSans.ttf';
+        
+        try {
+          const response = await fetch(fontPath, { method: 'HEAD' });
+          if (!response.ok) {
+            throw new Error(`فایل فونت در ریشه (Root) پیدا نشد. مطمئن شوید فایل کنار index.html است.`);
+          }
+          console.log("✅ Font file found at root.");
+
+          const font = new FontFace('IranSans', `url(${fontPath})`);
+          await font.load();
+          document.fonts.add(font);
+          
+          console.log("✅ Font 'IranSans' loaded successfully.");
+          document.body.style.setProperty('font-family', "'IranSans', sans-serif", 'important');
+          
+        } catch (err) {
+          console.error("❌ Font Error:", err.message);
+          banner.style.display = 'block';
+          banner.innerHTML = `⚠️ خطای فونت: ${err.message}`;
+        }
+      }
+
+      debugFont();
+
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').then(registration => {
-            console.log('SW registered: ', registration);
-          }).catch(registrationError => {
-            console.log('SW registration failed: ', registrationError);
-          });
+          navigator.serviceWorker.register('/sw.js').catch(console.error);
         });
       }
     </script>

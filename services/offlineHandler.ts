@@ -11,54 +11,46 @@ export const generateUUID = () => {
 };
 
 /**
- * Handles Insert Operations (Online First -> Offline Fallback)
- * 1. Tries Supabase Insert.
- * 2. If fails (Offline), generates ID, saves to Local DB (for UI), saves to SyncQueue.
+ * Handles Insert Operations (Native feel: Save locally first, sync in background)
  */
 export const handleOfflineInsert = async <T extends { id?: string }>(
     tableName: string,
     data: any,
     supabaseCall: () => Promise<any>
 ): Promise<T> => {
-    try {
-        if (!navigator.onLine) throw new Error('Offline');
-        return await supabaseCall();
-    } catch (error: any) {
-        // Only log warning if it's not a standard fetch error (which is expected offline)
-        if (error.message !== 'Failed to fetch' && error.message !== 'Offline') {
-             console.warn(`Offline Insert for ${tableName}:`, error);
-        }
-        
-        // Generate a temporary ID if not present
-        const offlineData = { ...data };
-        if (!offlineData.id) {
-            offlineData.id = generateUUID();
-        }
-        
-        // 1. Save to Local DB (for immediate UI update)
-        try {
-            const table = (db as any)[tableName];
-            if (table) {
-                await table.put(offlineData);
-            }
-        } catch (dbError) {
-            console.error("Local DB Insert Error:", dbError);
-        }
-
-        // 2. Add to Sync Queue
-        await db.syncQueue.add({
-            table: tableName,
-            action: 'CREATE',
-            data: offlineData,
-            timestamp: Date.now()
-        });
-
-        return offlineData as T;
+    // 1. Generate ID and save to Local DB IMMEDIATELY
+    const offlineData = { ...data };
+    if (!offlineData.id) {
+        offlineData.id = generateUUID();
     }
+    
+    try {
+        const table = (db as any)[tableName];
+        if (table) {
+            await table.put(offlineData);
+        }
+    } catch (dbError) {
+        console.error("Local DB Insert Error:", dbError);
+    }
+
+    // 2. Add to Sync Queue for background processing
+    await db.syncQueue.add({
+        table: tableName,
+        action: 'CREATE',
+        data: offlineData,
+        timestamp: Date.now()
+    });
+
+    // 3. Try to sync with Supabase in background if online
+    if (navigator.onLine) {
+        supabaseCall().catch(err => console.warn("Background sync failed, will retry later.", err));
+    }
+
+    return offlineData as T;
 };
 
 /**
- * Handles Update Operations
+ * Handles Update Operations (Native feel: Update locally first)
  */
 export const handleOfflineUpdate = async <T>(
     tableName: string,
@@ -66,33 +58,30 @@ export const handleOfflineUpdate = async <T>(
     updates: any,
     supabaseCall: () => Promise<any>
 ): Promise<T> => {
+    // 1. Update Local DB immediately
     try {
-        if (!navigator.onLine) throw new Error('Offline');
-        return await supabaseCall();
-    } catch (error: any) {
-        if (error.message !== 'Failed to fetch' && error.message !== 'Offline') {
-            console.warn(`Offline Update for ${tableName}:`, error);
+        const table = (db as any)[tableName];
+        if (table) {
+            await table.update(id, updates);
         }
-
-        // 1. Update Local DB
-        try {
-            const table = (db as any)[tableName];
-            if (table) {
-                await table.update(id, updates);
-            }
-        } catch (dbError) { console.error("Local DB Update Error:", dbError); }
-
-        // 2. Add to Queue
-        await db.syncQueue.add({
-            table: tableName,
-            action: 'UPDATE',
-            data: { id, ...updates },
-            timestamp: Date.now()
-        });
-
-        // Return merged data (approximation)
-        return { id, ...updates } as T;
+    } catch (dbError) { 
+        console.error("Local DB Update Error:", dbError); 
     }
+
+    // 2. Add to Queue
+    await db.syncQueue.add({
+        table: tableName,
+        action: 'UPDATE',
+        data: { id, ...updates },
+        timestamp: Date.now()
+    });
+
+    // 3. Background sync
+    if (navigator.onLine) {
+        supabaseCall().catch(err => console.warn("Background update sync failed", err));
+    }
+
+    return { id, ...updates } as T;
 };
 
 /**
@@ -103,48 +92,62 @@ export const handleOfflineDelete = async (
     id: string,
     supabaseCall: () => Promise<void>
 ): Promise<void> => {
+    // 1. Delete from Local DB immediately
     try {
-        if (!navigator.onLine) throw new Error('Offline');
-        await supabaseCall();
-    } catch (error: any) {
-        if (error.message !== 'Failed to fetch' && error.message !== 'Offline') {
-            console.warn(`Offline Delete for ${tableName}:`, error);
+        const table = (db as any)[tableName];
+        if (table) {
+            await table.delete(id);
         }
+    } catch (dbError) { console.error("Local DB Delete Error:", dbError); }
 
-        // 1. Delete from Local DB
-        try {
-            const table = (db as any)[tableName];
-            if (table) {
-                await table.delete(id);
-            }
-        } catch (dbError) { console.error("Local DB Delete Error:", dbError); }
+    // 2. Add to Queue
+    await db.syncQueue.add({
+        table: tableName,
+        action: 'DELETE',
+        data: id,
+        timestamp: Date.now()
+    });
 
-        // 2. Add to Queue
-        await db.syncQueue.add({
-            table: tableName,
-            action: 'DELETE',
-            data: id, // For delete, data is the ID
-            timestamp: Date.now()
-        });
+    // 3. Background sync
+    if (navigator.onLine) {
+        supabaseCall().catch(err => console.warn("Background delete sync failed", err));
     }
 };
 
 /**
- * Handles Read Operations with Join Simulation for specific tables
+ * Handles Read Operations (CRITICAL FOR NATIVE FEEL)
+ * Strategy: Return Local Data immediately, but provide a way to refresh.
+ * To keep it simple for now, we prioritize local and only fetch from network if local is empty.
  */
 export const handleOfflineRead = async <T>(
     tableName: string,
     supabaseCall: () => Promise<T>,
     fallbackLogic: () => Promise<T>
 ): Promise<T> => {
-    try {
-        if (!navigator.onLine) throw new Error('Offline');
-        return await supabaseCall();
-    } catch (error: any) {
-        // Suppress warning for standard offline errors to reduce console noise
-        if (error.message !== 'Failed to fetch' && error.message !== 'Offline') {
-            console.warn(`Offline Read for ${tableName}:`, error);
+    // NATIVE STRATEGY: Try local first. If it has data, return it.
+    // This removes the "Loading..." spinner on almost all page transitions.
+    const localData = await fallbackLogic();
+    
+    const isArray = Array.isArray(localData);
+    const hasData = isArray ? localData.length > 0 : !!localData;
+
+    if (hasData) {
+        // If we are online, we could trigger a background refresh, 
+        // but for a smooth UI, we return the local data NOW.
+        if (navigator.onLine) {
+            // We fire and forget the supabase call to update our local cache for NEXT time
+            supabaseCall().then(freshData => {
+                // Background update local DB logic could go here
+            }).catch(() => {});
         }
-        return await fallbackLogic();
+        return localData;
+    }
+
+    // Only if local is empty, we wait for network
+    try {
+        if (!navigator.onLine) return localData; // Return empty local
+        return await supabaseCall();
+    } catch (error) {
+        return localData;
     }
 };

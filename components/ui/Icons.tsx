@@ -42,3 +42,4 @@ export const CnsFaultIcon: React.FC<IconProps> = (props) => <FaIcon iconClass="f
 export const CopyIcon: React.FC<IconProps> = (props) => <FaIcon iconClass="fas fa-copy" {...props} />;
 export const SearchIcon: React.FC<IconProps> = (props) => <FaIcon iconClass="fas fa-search" {...props} />;
 export const BarChartIcon: React.FC<IconProps> = (props) => <FaIcon iconClass="fas fa-chart-bar" {...props} />;
+export const PrintIcon: React.FC<IconProps> = (props) => <FaIcon iconClass="fas fa-print" {...props} />;

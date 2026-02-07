@@ -1,5 +1,5 @@
 {
-  "name": "v26.2-build-git---start-new-offline",
+  "name": "v27.1,-mdf-interactive",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,18 +9,17 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "html2canvas": "1.4.1",
-    "react-router-dom": "6.22.3",
-    "jspdf": "2.5.1",
-    "jspdf-autotable": "3.8.2",
-    "react-dom": "18.2.0",
-    "react": "18.2.0",
-    "xlsx": "0.18.5",
-    "@supabase/supabase-js": "2.39.8",
-    "bcryptjs": "2.4.3",
-    "jalaali-js": "1.2.6",
-    "dexie": "3.2.4",
-    "@capacitor/cli": "^8.0.2"
+    "html2canvas": "^1.4.1",
+    "react-router-dom": "^7.9.6",
+    "jspdf": "^3.0.3",
+    "jspdf-autotable": "^5.0.2",
+    "react-dom": "^19.2.0",
+    "react": "^19.2.0",
+    "xlsx": "^0.18.5",
+    "@supabase/supabase-js": "^2.82.0",
+    "bcryptjs": "^3.0.3",
+    "jalaali-js": "^1.2.8",
+    "@capacitor/cli": "^8.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

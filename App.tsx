@@ -1,9 +1,8 @@
 
-import React, { useEffect } from 'react';
+import React from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext';
 import { SupabaseProvider } from './SupabaseContext';
-import { pullAllData } from './services/offlineSync';
 
 // Layouts
 import { Layout } from './components/layout/Layout';
@@ -48,6 +47,8 @@ import { PhoneLineSettings } from './components/phone_lines/PhoneLineSettings';
 import { FaultListPage } from './components/phone_lines/FaultListPage';
 import { AllLogsPage } from './components/phone_lines/AllLogsPage';
 import { BulkImportPhoneLinesPage } from './components/phone_lines/BulkImportPhoneLinesPage';
+import { MDFOverviewPage } from './components/phone_lines/MDFOverviewPage';
+import { MDFSetDetailPage } from './components/phone_lines/MDFSetDetailPage';
 
 // Contacts
 import { ContactDashboard } from './components/contacts/ContactDashboard';
@@ -121,14 +122,6 @@ const GeneralLayout: React.FC<{ title: string }> = ({ title }) => (
 );
 
 export const App: React.FC = () => {
-  
-  useEffect(() => {
-      // Initial Sync on App Load if Online
-      if (navigator.onLine) {
-          pullAllData().catch(err => console.error("Initial sync failed", err));
-      }
-  }, []);
-
   return (
     <AuthProvider>
       <SupabaseProvider>
@@ -183,6 +176,10 @@ export const App: React.FC = () => {
                 <Route path="bulk-import" element={<BulkImportPhoneLinesPage />} />
                 <Route path="settings" element={<PhoneLineSettings />} />
               </Route>
+              
+              {/* Separate Full Page for MDF Overview and Set Details */}
+              <Route path="/phone-lines/mdf/:nodeId" element={<GeneralLayout title="نمای کلی MDF" />}><Route index element={<MDFOverviewPage />} /></Route>
+              <Route path="/phone-lines/mdf/:nodeId/set/:setNumber" element={<GeneralLayout title="جزئیات مجموعه MDF" />}><Route index element={<MDFSetDetailPage />} /></Route>
 
               {/* Contact Management Module */}
               <Route path="/contacts" element={<ContactLayout />}>

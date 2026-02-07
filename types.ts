@@ -145,6 +145,20 @@ export interface NodeConfig {
   ports?: number;
   description?: string;
   image_url?: string;
+  // Layout configuration for MDF visualization
+  layout?: {
+      rows: number;
+      cols: number;
+      // Map "rowIndex-colIndex" to Set Number (e.g., "0-0": 1)
+      mapping: Record<string, number>;
+  };
+  // Store names for terminals: Key "SetIndex-TerminalIndex" (e.g. "1-5"), Value: "نام ترمینال"
+  terminalLabels?: Record<string, string>;
+  // Store physical status and custom name for ports: Key "PortAddress" (e.g. "158")
+  portDetails?: Record<string, {
+      customName?: string;
+      isPhysicallyBroken?: boolean;
+  }>;
 }
 
 export interface Node {

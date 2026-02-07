@@ -18,12 +18,26 @@ export const FAULT_TYPES: FaultType[] = [
 ];
 
 // Database Version Tracking
-export const DB_VERSION = '1.0.6';
+export const DB_VERSION = '1.0.5';
 export const LATEST_SQL_UPDATE = `-- Version ${DB_VERSION}
--- Settings for Backup/Restore Password
-INSERT INTO public.app_settings (key, value)
-VALUES ('backup_password', '"123456"')
-ON CONFLICT (key) DO NOTHING;
+-- Table: shift_requests
+CREATE TABLE IF NOT EXISTS public.shift_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_type text NOT NULL, -- 'LEAVE', 'SICK_LEAVE', 'EXCHANGE', 'INVITATION'
+  requester_id uuid REFERENCES public.users(id),
+  provider_id uuid REFERENCES public.users(id), -- For EXCHANGE
+  supervisor_id uuid REFERENCES public.users(id), -- Head of shift
+  dates text[] NOT NULL, -- Array of ISO dates
+  description text,
+  status text DEFAULT 'PENDING', -- 'PENDING_PROVIDER', 'PENDING_SUPERVISOR', 'APPROVED', 'REJECTED'
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now()
+);
+
+-- RLS for shift_requests
+ALTER TABLE public.shift_requests ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Enable all access for shift_requests" ON public.shift_requests;
+CREATE POLICY "Enable all access for shift_requests" ON public.shift_requests FOR ALL USING (true) WITH CHECK (true);
 `;
 
 // Supabase table names
@@ -62,41 +76,6 @@ export const TABLES = {
   SHIFT_REQUESTS: 'shift_requests',
 };
 
-export const TABLE_NAMES_FA: Record<string, string> = {
-  [TABLES.ASSETS]: 'تجهیزات و اموال',
-  [TABLES.CATEGORIES]: 'دسته‌بندی‌ها',
-  [TABLES.LOCATIONS]: 'محل‌های قرارگیری',
-  [TABLES.MAINTENANCE_LOGS]: 'لاگ‌های نگهداری',
-  [TABLES.AUDIT_LOGS]: 'لاگ‌های سیستمی',
-  [TABLES.ASSET_STATUSES]: 'وضعیت‌های اموال',
-  [TABLES.NODES]: 'گره‌های مخابراتی',
-  [TABLES.PHONE_LINES]: 'خطوط تلفن',
-  [TABLES.ROUTE_NODES]: 'مسیرهای خطوط',
-  [TABLES.PHONE_LINE_LOGS]: 'لاگ خطوط تلفن',
-  [TABLES.PHONE_LINE_FAULTS]: 'خرابی‌های تلفن',
-  [TABLES.PHONE_LINE_FAULT_VOICE_NOTES]: 'پیام‌های صوتی خرابی',
-  [TABLES.TAGS]: 'تگ‌ها',
-  [TABLES.PHONE_LINE_TAGS]: 'اتصال تگ‌ها',
-  [TABLES.CONTACTS]: 'مخاطبین',
-  [TABLES.CONTACT_GROUPS]: 'گروه‌های مخاطبین',
-  [TABLES.CONTACT_PHONE_NUMBERS]: 'شماره‌های تماس',
-  [TABLES.CONTACT_EMAILS]: 'ایمیل‌ها',
-  [TABLES.CONTACT_GROUP_MEMBERS]: 'اعضای گروه‌ها',
-  [TABLES.CNS_EQUIPMENT]: 'تجهیزات CNS',
-  [TABLES.CNS_FAULT_REPORTS]: 'گزارشات CNS',
-  [TABLES.CNS_ACTION_LOGS]: 'اقدامات CNS',
-  [TABLES.CNS_MAINTENANCE_SCHEDULES]: 'برنامه نگهداری CNS',
-  [TABLES.CNS_MAINTENANCE_LOGS]: 'سوابق نگهداری CNS',
-  [TABLES.TASKS]: 'تسک‌ها',
-  [TABLES.TASK_LOGS]: 'لاگ تسک‌ها',
-  [TABLES.ROLES]: 'نقش‌ها',
-  [TABLES.USERS]: 'کاربران',
-  [TABLES.REFRESH_TOKENS]: 'توکن‌ها',
-  [TABLES.APP_SETTINGS]: 'تنظیمات برنامه',
-  [TABLES.SMS_LOGS]: 'لاگ پیامک‌ها',
-  [TABLES.SHIFT_REQUESTS]: 'درخواست‌های شیفت',
-};
-
 export const STORAGE_BUCKETS = {
   ASSET_IMAGES: 'asset_images',
   FAULT_VOICE_NOTES: 'fault_voice_notes',
@@ -115,7 +94,7 @@ export const SETTINGS_KEYS = {
   DASHBOARD_ORDER: 'dashboard_module_order',
   PHONE_WIRE_COLORS: 'phone_wire_colors',
   PHONE_LINE_DASHBOARD_CARDS: 'phone_line_dashboard_cards',
-  SHIFT_TEMPLATES: 'shift_notification_templates', 
+  SHIFT_TEMPLATES: 'shift_notification_templates', // New Key
 };
 
 export const DASHBOARD_MODULES_INFO = [

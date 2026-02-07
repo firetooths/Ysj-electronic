@@ -1,12 +1,13 @@
 
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Modal } from '../ui/Modal';
 import { Node, NodeType } from '../../types';
 import { getNodeStats, updateNodeConfig, uploadNodeImage } from '../../services/nodeService';
 import { Button } from '../ui/Button';
 import { Spinner } from '../ui/Spinner';
 import { TextArea } from '../ui/Input';
-import { CameraIcon, EditIcon, ListIcon, PhoneIcon, NodeIcon } from '../ui/Icons';
+import { CameraIcon, EditIcon, ListIcon, PhoneIcon, NodeIcon, DashboardIcon } from '../ui/Icons';
 
 interface NodeDetailsModalProps {
     isOpen: boolean;
@@ -21,6 +22,7 @@ interface NodeDetailsModalProps {
 export const NodeDetailsModal: React.FC<NodeDetailsModalProps> = ({ 
     isOpen, onClose, node, onEdit, onPortManage, onLinesList, onUpdate 
 }) => {
+    const navigate = useNavigate();
     const [stats, setStats] = useState<{ total: number, used: number, free: number, lastActivity: { date: string, port: string } | null } | null>(null);
     const [isLoadingStats, setIsLoadingStats] = useState(true);
     const [description, setDescription] = useState('');
@@ -108,6 +110,11 @@ export const NodeDetailsModal: React.FC<NodeDetailsModalProps> = ({
         }
     };
 
+    const handleNavigateToOverview = () => {
+        onClose();
+        navigate(`/phone-lines/mdf/${node.id}`);
+    };
+
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`جزئیات گره: ${node.name}`} className="sm:max-w-2xl">
             <div className="p-4 space-y-6">
@@ -139,9 +146,16 @@ export const NodeDetailsModal: React.FC<NodeDetailsModalProps> = ({
 
                     {/* Stats & Info Section */}
                     <div className="w-full md:w-2/3">
-                        <h3 className="text-xl font-bold text-gray-800 mb-2 flex items-center">
-                            {node.name}
-                            <span className="text-xs font-normal text-gray-500 bg-gray-100 px-2 py-1 rounded-full mr-2">{node.type}</span>
+                        <h3 className="text-xl font-bold text-gray-800 mb-2 flex items-center justify-between">
+                            <span className="flex items-center">
+                                {node.name}
+                                <span className="text-xs font-normal text-gray-500 bg-gray-100 px-2 py-1 rounded-full mr-2">{node.type}</span>
+                            </span>
+                            {node.type === NodeType.MDF && (
+                                <Button size="sm" variant="primary" onClick={handleNavigateToOverview}>
+                                    <DashboardIcon className="ml-1" /> نمای کلی
+                                </Button>
+                            )}
                         </h3>
                         
                         {renderConfigDetails()}

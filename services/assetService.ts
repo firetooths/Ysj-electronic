@@ -4,8 +4,8 @@ import { logAuditAction } from './auditService';
 import { deleteImages } from './storageService';
 import { Asset, Location } from '../types';
 import { TABLES } from '../constants';
-import { db } from '../db';
-import { handleOfflineInsert, handleOfflineUpdate, handleOfflineDelete, handleOfflineRead } from './offlineHandler';
+
+const CACHE_KEY_PREFIX = 'offline_assets_cache_';
 
 const getCurrentUserForLog = (): string => {
   try {
@@ -21,26 +21,32 @@ const getCurrentUserForLog = (): string => {
 };
 
 export const getAssetById = async (id: string): Promise<Asset | null> => {
-  return handleOfflineRead(TABLES.ASSETS, 
-    async () => {
-        const client = getSupabaseSafe();
-        const { data, error } = await client
-            .from(TABLES.ASSETS)
-            .select('*, category:category_id(*), location:location_id(*)')
-            .eq('id', id)
-            .single();
-        if (error && error.code !== 'PGRST116') throw error;
-        return data;
-    },
-    async () => {
-        const asset = await db.assets.get(id);
-        if (!asset) return null;
-        // Manual Join
-        if (asset.category_id) asset.category = await db.categories.get(asset.category_id);
-        if (asset.location_id) asset.location = await db.locations.get(asset.location_id);
-        return asset;
+  const client = getSupabaseSafe();
+  try {
+    const { data, error } = await client
+        .from(TABLES.ASSETS)
+        .select('*, category:category_id(*), location:location_id(*)')
+        .eq('id', id)
+        .single();
+    if (error && error.code !== 'PGRST116') {
+        throw error;
     }
-  );
+    return data;
+  } catch (err: any) {
+      // Offline fallback: check if we have this asset in our list cache
+      // Note: This is a simple fallback and relies on the user having visited the list page.
+      if (err.message && (err.message.includes('Failed to fetch') || err.message.includes('Network request failed'))) {
+          console.warn('Network error, attempting to find asset in local cache...');
+          const cacheKey = `${CACHE_KEY_PREFIX}all`; // Try general cache
+          const cached = localStorage.getItem(cacheKey);
+          if (cached) {
+              const { assets } = JSON.parse(cached);
+              const found = assets.find((a: Asset) => a.id === id);
+              if (found) return found;
+          }
+      }
+      throw err;
+  }
 };
 
 export const getAssets = async (
@@ -53,190 +59,301 @@ export const getAssets = async (
   verifiedFilter: boolean | null = null,
   externalFilter: boolean | null = null,
 ): Promise<{ assets: Asset[]; total: number }> => {
-    
-    // Fallback Logic for Dexie
-    const offlineFallback = async () => {
-        let collection = db.assets.toCollection();
-        
-        // Apply filters in memory (Dexie filtering is basic)
-        let allAssets = await collection.toArray();
-        
-        // Filter: Status != 'منتقل شده' (default logic)
-        allAssets = allAssets.filter(a => a.status !== 'منتقل شده');
+  const client = getSupabaseSafe();
+  
+  // Construct a cache key based on filters to allow partial caching
+  const cacheKey = `${CACHE_KEY_PREFIX}${page}_${searchTerm}_${statusFilter}_${categoryFilter}_${locationFilter}`;
+  
+  try {
+      let query = client
+        .from(TABLES.ASSETS)
+        .select('*, category:category_id(*), location:location_id(*)', {
+          count: 'exact',
+        })
+        .neq('status', 'منتقل شده');
 
-        if (searchTerm) {
-            const lower = searchTerm.toLowerCase();
-            allAssets = allAssets.filter(a => 
-                (a.name && a.name.toLowerCase().includes(lower)) ||
-                (a.asset_id_number && String(a.asset_id_number).includes(lower)) ||
-                (a.description && a.description.toLowerCase().includes(lower))
-            );
-        }
-        if (statusFilter) allAssets = allAssets.filter(a => a.status === statusFilter);
-        if (categoryFilter) allAssets = allAssets.filter(a => a.category_id === categoryFilter);
-        if (locationFilter) allAssets = allAssets.filter(a => a.location_id === locationFilter);
-        if (verifiedFilter !== null) allAssets = allAssets.filter(a => a.is_verified === verifiedFilter);
-        if (externalFilter !== null) allAssets = allAssets.filter(a => a.is_external === externalFilter);
+      if (searchTerm && searchTerm.trim() !== '') {
+        query = query.or(
+          `name.ilike.%${searchTerm}%,description.ilike.%${searchTerm}%,asset_id_number.ilike.%${searchTerm}%`
+        );
+      }
 
-        // Sort descending by created_at (simulate)
-        allAssets.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+      if (statusFilter) query = query.eq('status', statusFilter);
+      if (categoryFilter) query = query.eq('category_id', categoryFilter);
+      if (locationFilter) query = query.eq('location_id', locationFilter);
+      if (verifiedFilter !== null) query = query.eq('is_verified', verifiedFilter);
+      if (externalFilter !== null) query = query.eq('is_external', externalFilter);
 
-        const total = allAssets.length;
-        const from = (page - 1) * pageSize;
-        const sliced = allAssets.slice(from, from + pageSize);
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
 
-        // Join Category & Location
-        const enriched = await Promise.all(sliced.map(async (asset) => {
-            const a = { ...asset };
-            if (a.category_id) a.category = await db.categories.get(a.category_id);
-            if (a.location_id) a.location = await db.locations.get(a.location_id);
-            return a;
-        }));
+      const { data, error, count } = await query
+        .order('created_at', { ascending: false })
+        .range(from, to);
 
-        return { assets: enriched, total };
-    };
+      if (error) throw error;
 
-    return handleOfflineRead(TABLES.ASSETS, async () => {
-        const client = getSupabaseSafe();
-        let query = client.from(TABLES.ASSETS)
-            .select('*, category:category_id(*), location:location_id(*)', { count: 'exact' })
-            .neq('status', 'منتقل شده');
+      const result = { assets: data || [], total: count || 0 };
+      
+      // Save to cache on success
+      try {
+          localStorage.setItem(cacheKey, JSON.stringify(result));
+          // Also cache a generic "latest" key for fallback if user is on page 1 with no filters
+          if (page === 1 && !searchTerm && !statusFilter && !categoryFilter) {
+               localStorage.setItem(`${CACHE_KEY_PREFIX}all`, JSON.stringify(result));
+          }
+      } catch (e) {
+          console.warn('Failed to cache assets to localStorage (likely quota exceeded).');
+      }
 
-        if (searchTerm) query = query.or(`name.ilike.%${searchTerm}%,description.ilike.%${searchTerm}%,asset_id_number.ilike.%${searchTerm}%`);
-        if (statusFilter) query = query.eq('status', statusFilter);
-        if (categoryFilter) query = query.eq('category_id', categoryFilter);
-        if (locationFilter) query = query.eq('location_id', locationFilter);
-        if (verifiedFilter !== null) query = query.eq('is_verified', verifiedFilter);
-        if (externalFilter !== null) query = query.eq('is_external', externalFilter);
+      return result;
 
-        const { data, error, count } = await query.order('created_at', { ascending: false }).range((page - 1) * pageSize, page * pageSize - 1);
-        if (error) throw error;
-        return { assets: data || [], total: count || 0 };
-    }, offlineFallback);
+  } catch (error: any) {
+      // Offline Strategy
+      if (error.message && (error.message.includes('Failed to fetch') || error.message.includes('Network request failed'))) {
+          console.warn('Network error, loading assets from cache...');
+          const cachedData = localStorage.getItem(cacheKey);
+          if (cachedData) {
+              return JSON.parse(cachedData);
+          }
+          // Fallback to "all" cache if specific filter cache missing
+          const allCached = localStorage.getItem(`${CACHE_KEY_PREFIX}all`);
+          if (allCached) {
+              return JSON.parse(allCached);
+          }
+      }
+      console.error('Error fetching assets:', error.message);
+      throw error;
+  }
 };
 
-export const getTransferredAssets = async (searchTerm: string = '', page: number = 1, pageSize: number = 10): Promise<{ assets: Asset[]; total: number }> => {
-    const offlineFallback = async () => {
-        let allAssets = await db.assets.where('status').equals('منتقل شده').toArray();
-        if (searchTerm) {
-            const lower = searchTerm.toLowerCase();
-            allAssets = allAssets.filter(a => a.name.toLowerCase().includes(lower) || String(a.asset_id_number).includes(lower));
-        }
-        allAssets.sort((a, b) => new Date(b.transferred_at || 0).getTime() - new Date(a.transferred_at || 0).getTime());
-        const total = allAssets.length;
-        const sliced = allAssets.slice((page - 1) * pageSize, page * pageSize);
-        
-        const enriched = await Promise.all(sliced.map(async (asset) => {
-            const a = { ...asset };
-            if (a.category_id) a.category = await db.categories.get(a.category_id);
-            if (a.location_id) a.location = await db.locations.get(a.location_id);
-            return a;
-        }));
-        return { assets: enriched, total };
-    };
+export const getTransferredAssets = async (
+  searchTerm: string = '',
+  page: number = 1,
+  pageSize: number = 10,
+): Promise<{ assets: Asset[]; total: number }> => {
+  const client = getSupabaseSafe();
+  let query = client
+    .from(TABLES.ASSETS)
+    .select('*, category:category_id(*), location:location_id(*)', {
+      count: 'exact',
+    })
+    .eq('status', 'منتقل شده');
 
-    return handleOfflineRead(TABLES.ASSETS, async () => {
-        const client = getSupabaseSafe();
-        let query = client.from(TABLES.ASSETS).select('*, category:category_id(*), location:location_id(*)', { count: 'exact' }).eq('status', 'منتقل شده');
-        if (searchTerm) query = query.or(`name.ilike.%${searchTerm}%,transferred_to.ilike.%${searchTerm}%,asset_id_number.ilike.%${searchTerm}%`);
-        const { data, error, count } = await query.order('transferred_at', { ascending: false }).range((page - 1) * pageSize, page * pageSize - 1);
-        if (error) throw error;
-        return { assets: data || [], total: count || 0 };
-    }, offlineFallback);
-};
-
-export const getAssetCountByField = async (fieldName: 'category_id' | 'location_id', id: string): Promise<number> => {
-    return handleOfflineRead(TABLES.ASSETS, 
-        async () => {
-            const client = getSupabaseSafe();
-            const { count, error } = await client.from(TABLES.ASSETS).select('id', { count: 'exact', head: true }).eq(fieldName, id);
-            if (error) throw error;
-            return count || 0;
-        },
-        async () => {
-            return await db.assets.where(fieldName).equals(id).count();
-        }
+  if (searchTerm && searchTerm.trim() !== '') {
+    query = query.or(
+      `name.ilike.%${searchTerm}%,transferred_to.ilike.%${searchTerm}%,asset_id_number.ilike.%${searchTerm}%`
     );
+  }
+
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  const { data, error, count } = await query
+    .order('transferred_at', { ascending: false })
+    .range(from, to);
+
+  if (error) {
+    console.error('Error fetching transferred assets:', error.message);
+    throw error;
+  }
+
+  return { assets: data || [], total: count || 0 };
 };
 
-export const createAsset = async (asset: any): Promise<Asset> => {
-    const payload = { ...asset, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
-    
-    const result = await handleOfflineInsert<Asset>(TABLES.ASSETS, payload, async () => {
-        const client = getSupabaseSafe();
-        const { data, error } = await client.from(TABLES.ASSETS).insert(asset).select('*, category:category_id(*), location:location_id(*)').single();
-        if (error) throw error;
-        return data;
-    });
-    
-    // We don't await audit logging to prevent blocking UI, and audit logic handles its own offline queue
-    logAuditAction(result.id, 'ایجاد تجهیز جدید', getCurrentUserForLog(), null, JSON.stringify(result));
-    return result;
+export const getAssetCountByField = async (
+  fieldName: 'category_id' | 'location_id',
+  id: string
+): Promise<number> => {
+  const client = getSupabaseSafe();
+  const { count, error } = await client
+    .from(TABLES.ASSETS)
+    .select('id', { count: 'exact', head: true })
+    .eq(fieldName, id);
+
+  if (error) {
+    console.error(`Error getting asset count for ${fieldName}:`, error.message);
+    throw error;
+  }
+  return count || 0;
 };
 
-export const updateAsset = async (id: string, updates: any): Promise<Asset> => {
-    // Audit Logic Preparation (Needs to happen before update logic ideally, but for offline simple queue we log after)
-    const oldAsset = await getAssetById(id);
-    
-    const result = await handleOfflineUpdate<Asset>(TABLES.ASSETS, id, { ...updates, updated_at: new Date().toISOString() }, async () => {
-        const client = getSupabaseSafe();
-        const { data, error } = await client.from(TABLES.ASSETS).update(updates).eq('id', id).select('*, category:category_id(*), location:location_id(*)').single();
-        if (error) throw error;
-        return data;
-    });
+export const createAsset = async (asset: Omit<Asset, 'id' | 'created_at' | 'updated_at' | 'transferred_to' | 'transferred_at'>): Promise<Asset> => {
+  const client = getSupabaseSafe();
+  const { data, error } = await client
+    .from(TABLES.ASSETS)
+    .insert(asset)
+    .select('*, category:category_id(*), location:location_id(*)')
+    .single();
+  if (error) {
+    console.error('Error creating asset:', error.message);
+    throw error;
+  }
+  await logAuditAction(data.id, 'ایجاد تجهیز جدید', getCurrentUserForLog(), null, JSON.stringify(data));
+  return data;
+};
 
-    // Simple Audit log for offline actions (Full detail audit is complex offline)
-    if (oldAsset) {
-        logAuditAction(id, `بروزرسانی تجهیز (حالت آفلاین/آنلاین)`, getCurrentUserForLog(), 'general', 'old', 'new');
+export const updateAsset = async (
+  id: string,
+  updates: Partial<Omit<Asset, 'id' | 'created_at' | 'updated_at' | 'image_urls'>>,
+): Promise<Asset> => {
+  const client = getSupabaseSafe();
+  const oldAsset = await getAssetById(id);
+  const { data, error } = await client
+    .from(TABLES.ASSETS)
+    .update(updates)
+    .eq('id', id)
+    .select('*, category:category_id(*), location:location_id(*)')
+    .single();
+  if (error) {
+    console.error('Error updating asset:', error.message);
+    throw error;
+  }
+
+  const currentUser = getCurrentUserForLog();
+
+  if (oldAsset && data) {
+    for (const key in updates) {
+      if (
+        Object.prototype.hasOwnProperty.call(updates, key) &&
+        (oldAsset as any)[key] !== (data as any)[key]
+      ) {
+        let oldValue = (oldAsset as any)[key];
+        let newValue = (data as any)[key];
+        let description = `بروزرسانی فیلد ${key}`;
+
+        if (key === 'location_id') {
+          const oldLocation = (oldAsset?.location as Location)?.name || 'نامشخص';
+          const newLocation = (data?.location as Location)?.name || 'نامشخص';
+          description = `تغییر محل از '${oldLocation}' به '${newLocation}'`;
+          oldValue = oldLocation;
+          newValue = newLocation;
+        } else if (key === 'status') {
+          description = `تغییر وضعیت از '${oldAsset.status}' به '${data.status}'`;
+        } else if (key === 'is_verified') {
+            description = newValue ? 'اموال توسط کاربر بررسی و تایید شد' : 'وضعیت تایید اموال لغو شد';
+            oldValue = oldValue ? 'تایید شده' : 'بررسی نشده';
+            newValue = newValue ? 'تایید شده' : 'بررسی نشده';
+        } else if (key === 'is_external') {
+            description = newValue ? 'تجهیز به عنوان اموال خارج از شرکت علامت‌گذاری شد' : 'وضعیت اموال خارج از شرکت لغو شد';
+            oldValue = oldValue ? 'خارج از شرکت' : 'داخل شرکت';
+            newValue = newValue ? 'خارج از شرکت' : 'داخل شرکت';
+        }
+
+        await logAuditAction(
+          id,
+          description,
+          currentUser,
+          key,
+          String(oldValue),
+          String(newValue)
+        );
+      }
     }
-    return result;
+  }
+
+  return data;
 };
 
-export const transferAsset = async (id: string, transferredTo: string): Promise<Asset> => {
-    const updates = {
-        status: 'منتقل شده',
-        transferred_to: transferredTo,
-        transferred_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-    };
-    
-    const result = await updateAsset(id, updates);
-    logAuditAction(id, `تجهیز به '${transferredTo}' منتقل شد`, getCurrentUserForLog());
-    return result;
+export const transferAsset = async (
+  id: string,
+  transferredTo: string,
+): Promise<Asset> => {
+  const client = getSupabaseSafe();
+  const oldAsset = await getAssetById(id);
+  if (!oldAsset) throw new Error("تجهیز برای انتقال یافت نشد.");
+
+  const updates = {
+    status: 'منتقل شده',
+    transferred_to: transferredTo,
+    transferred_at: new Date().toISOString(),
+  };
+
+  const { data, error } = await client
+    .from(TABLES.ASSETS)
+    .update(updates)
+    .eq('id', id)
+    .select('*, category:category_id(*), location:location_id(*)')
+    .single();
+
+  if (error) {
+    console.error('Error transferring asset:', error.message);
+    throw error;
+  }
+
+  await logAuditAction(
+    id,
+    `تجهیز به '${transferredTo}' منتقل شد`,
+    getCurrentUserForLog(),
+    'status',
+    oldAsset.status,
+    'منتقل شده',
+  );
+
+  return data;
 };
+
 
 export const deleteAsset = async (id: string): Promise<void> => {
-    const asset = await getAssetById(id);
-    if (asset?.image_urls && asset.image_urls.length > 0) {
-        deleteImages(asset.image_urls).catch(e => console.warn("Offline image delete skip", e));
-    }
-    await handleOfflineDelete(TABLES.ASSETS, id, async () => {
-        const client = getSupabaseSafe();
-        const { error } = await client.from(TABLES.ASSETS).delete().eq('id', id);
-        if (error) throw error;
-    });
+  const client = getSupabaseSafe();
+  const assetToDelete = await getAssetById(id);
+  if (assetToDelete?.image_urls && assetToDelete.image_urls.length > 0) {
+    await deleteImages(assetToDelete.image_urls);
+  }
+
+  const { error } = await client.from(TABLES.ASSETS).delete().eq('id', id);
+  if (error) {
+    console.error('Error deleting asset:', error.message);
+    throw error;
+  }
 };
 
-export const checkAssetIdNumberExists = async (asset_id_number: string, excludeId?: string): Promise<boolean> => {
-    return handleOfflineRead(TABLES.ASSETS,
-        async () => {
-            const client = getSupabaseSafe();
-            let query = client.from(TABLES.ASSETS).select('id', { count: 'exact', head: true }).eq('asset_id_number', asset_id_number);
-            if (excludeId) query = query.neq('id', excludeId);
-            const { count, error } = await query;
-            if (error) throw error;
-            return count !== null && count > 0;
-        },
-        async () => {
-            // Dexie check
-            const found = await db.assets.where('asset_id_number').equals(asset_id_number).first();
-            if (!found) return false;
-            if (excludeId && found.id === excludeId) return false;
-            return true;
-        }
-    );
+export const checkAssetIdNumberExists = async (
+  asset_id_number: string,
+  excludeId?: string,
+): Promise<boolean> => {
+  const client = getSupabaseSafe();
+  let query = client
+    .from(TABLES.ASSETS)
+    .select('id', { count: 'exact', head: true })
+    .eq('asset_id_number', asset_id_number);
+
+  if (excludeId) {
+    query = query.neq('id', excludeId);
+  }
+
+  const { count, error } = await query;
+  if (error) {
+    console.error('Error checking asset ID number:', error.message);
+    throw error;
+  }
+  return count !== null && count > 0;
 };
 
-export const updateAssetImageUrls = async (assetId: string, newImageUrls: string[]): Promise<Asset> => {
-    return updateAsset(assetId, { image_urls: newImageUrls });
+export const updateAssetImageUrls = async (
+  assetId: string,
+  newImageUrls: string[],
+): Promise<Asset> => {
+  const client = getSupabaseSafe();
+  const { data, error } = await client
+    .from(TABLES.ASSETS)
+    .update({ image_urls: newImageUrls })
+    .eq('id', assetId)
+    .select('*, category:category_id(*), location:location_id(*)')
+    .single();
+  if (error) {
+    console.error('Error updating asset image URLs:', error.message);
+    throw error;
+  }
+  
+  await logAuditAction(
+    assetId,
+    'تصاویر تجهیز بروزرسانی شد',
+    getCurrentUserForLog(),
+    'image_urls',
+    null,
+    'تعداد تصاویر: ' + newImageUrls.length
+  );
+  
+  return data;
 };
